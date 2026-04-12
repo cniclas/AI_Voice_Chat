@@ -1,0 +1,14 @@
+# Audio recording
+pyaudio
+
+# Audio playback
+sounddevice
+
+# Speech recognition — install from local source
+-e ./whisper
+
+# Text-to-speech
+piper-tts
+
+# HTTP client for Ollama
+requests
