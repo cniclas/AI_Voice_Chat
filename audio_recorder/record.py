@@ -24,13 +24,29 @@ def _getch() -> str:
     return ch
 
 
-def record_once(output_path: str = OUTPUT_FILENAME) -> str | None:
+def record_once(output_path: str = OUTPUT_FILENAME) -> tuple[str, str] | None:
     """
-    SPACE to start recording, SPACE again to stop.
-    'q' or Ctrl+C to quit.
-    Returns output_path on success, None if user quit.
+    'e' for English, 's' for Spanish to start recording immediately.
+    SPACE to stop. 'q' or Ctrl+C to quit.
+    Returns (language, output_path) on success, None if user quit.
     """
-    state = {"recording": False}
+    # Wait for language selection to start recording
+    print("Press 'e' for English, 's' for Spanish, or 'q' to quit.")
+    language = None
+    try:
+        while language is None:
+            ch = _getch()
+            if ch == "e":
+                language = "en"
+                print("Recording in English... Press SPACE to stop.")
+            elif ch == "s":
+                language = "es"
+                print("Recording in Spanish... Press SPACE to stop.")
+            elif ch in ("q", "Q", "\x03"):  # q or Ctrl+C
+                return None
+    except KeyboardInterrupt:
+        return None
+
     frames = []
     stop_capture = threading.Event()
 
@@ -46,25 +62,18 @@ def record_once(output_path: str = OUTPUT_FILENAME) -> str | None:
     def _capture():
         while not stop_capture.is_set():
             data = stream.read(CHUNK, exception_on_overflow=False)
-            if state["recording"]:
-                frames.append(data)
+            frames.append(data)
 
     capture_thread = threading.Thread(target=_capture, daemon=True)
     capture_thread.start()
 
-    print("Press SPACE to start recording. Press 'q' to quit.")
     result_path = None
     try:
         while True:
             ch = _getch()
             if ch == " ":
-                if not state["recording"]:
-                    state["recording"] = True
-                    print("Recording... Press SPACE to stop.")
-                else:
-                    state["recording"] = False
-                    result_path = output_path
-                    break
+                result_path = output_path
+                break
             elif ch in ("q", "Q", "\x03"):  # q or Ctrl+C
                 break
     except KeyboardInterrupt:
@@ -85,7 +94,7 @@ def record_once(output_path: str = OUTPUT_FILENAME) -> str | None:
     wf.setframerate(RATE)
     wf.writeframes(b"".join(frames))
     wf.close()
-    return result_path
+    return (language, result_path)
 
 
 def main():
@@ -95,7 +104,8 @@ def main():
         if result is None:
             print("Goodbye!")
             break
-        print(f"Audio saved as {OUTPUT_FILENAME}")
+        language, output_path = result
+        print(f"Audio saved as {output_path} (Language: {language})")
 
 
 if __name__ == "__main__":

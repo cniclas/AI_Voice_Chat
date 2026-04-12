@@ -1,5 +1,6 @@
 import os
 import wave
+import numpy as np
 import sounddevice as sd
 from piper.voice import PiperVoice
 
@@ -14,26 +15,34 @@ voices = {
 def synthesize(text: str, lang: str, output_file: str | None = None, play: bool = True):
     """
     Synthesize text using the given language ("en" or "es").
-    Optionally saves to a WAV file and/or plays directly.
+    Saves to a WAV file and/or plays the audio.
     """
     voice = voices[lang]
 
+    # Generate audio file
     if output_file:
-        with wave.open(output_file, "w") as wav_file:
+        with wave.open(output_file, "wb") as wav_file:
             voice.synthesize_wav(text, wav_file)
         print(f"Saved to {output_file}")
 
+    # Play audio if requested
     if play:
-        stream = sd.OutputStream(
-            samplerate=voice.config.sample_rate,
-            channels=1,
-            dtype="int16",
-        )
-        stream.start()
-        for chunk in voice.synthesize(text):
-            stream.write(chunk.audio_int16_array)
-        stream.stop()
-        stream.close()
+        # Create a temporary file to read back for playback
+        playback_file = output_file if output_file else "/tmp/piper_playback.wav"
+
+        if not output_file:
+            with wave.open(playback_file, "wb") as wav_file:
+                voice.synthesize_wav(text, wav_file)
+
+        # Read and play the WAV file
+        with wave.open(playback_file, "rb") as wav_file:
+            sample_rate = wav_file.getframerate()
+            frames = wav_file.readframes(wav_file.getnframes())
+            # Convert bytes to numpy array
+            audio_data = np.frombuffer(frames, dtype=np.int16)
+
+        sd.play(audio_data, samplerate=sample_rate)
+        sd.wait()
 
 
 if __name__ == "__main__":
@@ -44,3 +53,5 @@ if __name__ == "__main__":
     ]
     for i, (text, lang) in enumerate(segments):
         synthesize(text, lang, output_file=f"output_{i}_{lang}.wav", play=True)
+
+
