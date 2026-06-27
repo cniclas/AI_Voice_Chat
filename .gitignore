@@ -2,3 +2,7 @@
 venv
 recordings/
 
+
+__pycache__/
+*.pyc
+whisper/
