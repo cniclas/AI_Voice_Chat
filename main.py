@@ -4,6 +4,7 @@ import glob
 import site
 import time
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from tts import synthesize
 from dataclasses import dataclass
 from typing import Optional
 
-RECORDING_PATH = "/tmp/voice_chat_recording.wav"
+RECORDING_PATH = os.path.join(tempfile.gettempdir(), "voice_chat_recording.wav")
 RECORDINGS_ROOT = os.path.join(_ROOT, "recordings")
 
 # Create the root recordings directory if it doesn't exist

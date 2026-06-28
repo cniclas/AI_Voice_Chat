@@ -1,4 +1,6 @@
 import os
+import platform
+import tempfile
 import wave
 import numpy as np
 import sounddevice as sd
@@ -21,10 +23,17 @@ def _output_samplerate(default: int = 44100) -> int:
         return default
 
 
-# The Piper voices render at 22050 Hz but the output device runs at a higher
-# rate (44100 on WSL). Resampling to the device rate ourselves keeps the
-# WSLg audio bridge from doing it with ALSA's low-quality converter.
+# Pre-resample to the device's native rate to avoid quality loss from the OS
+# resampler. On WSL the bridge uses a low-quality adaptive converter; on
+# native Windows PortAudio handles it, but explicit resampling is still
+# cleaner.
 _DEVICE_RATE = _output_samplerate()
+
+# On WSL the audio bridge (PulseAudio → WSLg → Windows) has a cold-start
+# underrun in the first ~100-300 ms, producing a harsh onset. Prepend silence
+# so the transient lands in the preroll, not the first word.
+# On native Windows PortAudio primes immediately — no preroll needed.
+_PREROLL_SECONDS = 0.0 if platform.system() == "Windows" else 0.5
 
 
 def _resample_to(audio_i16: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
@@ -56,32 +65,27 @@ def synthesize(text: str, lang: str, output_file: str | None = None, play: bool 
 
     # Play audio if requested
     if play:
-        # Create a temporary file to read back for playback
-        playback_file = output_file if output_file else "/tmp/piper_playback.wav"
+        playback_file = output_file if output_file else os.path.join(
+            tempfile.gettempdir(), "piper_playback.wav"
+        )
 
         if not output_file:
             with wave.open(playback_file, "wb") as wav_file:
                 voice.synthesize_wav(text, wav_file)
 
-        # Read and play the WAV file
         with wave.open(playback_file, "rb") as wav_file:
             sample_rate = wav_file.getframerate()
             frames = wav_file.readframes(wav_file.getnframes())
-            # Convert bytes to numpy array
             audio_data = np.frombuffer(frames, dtype=np.int16)
 
-        # sd.play() opens a fresh output stream each call. On WSL2 (audio
-        # bridged to the Windows audio server) that stream has a cold start:
-        # the first ~100-300 ms underruns, producing a harsh/distorted onset
-        # that clears once the device buffer primes. Prepend a short silence
-        # pre-roll so the warm-up transient lands in silence instead of the
-        # first word, and request larger buffers via latency="high".
-        preroll = np.zeros(int(sample_rate * 0.5), dtype=np.int16)
-        audio_data = np.concatenate([preroll, audio_data])
+        # On WSL2 the audio bridge cold-starts with an underrun; prepend
+        # silence so the distortion lands in the preroll, not the first word.
+        # _PREROLL_SECONDS is 0 on native Windows where PortAudio primes
+        # immediately.
+        if _PREROLL_SECONDS > 0:
+            preroll = np.zeros(int(sample_rate * _PREROLL_SECONDS), dtype=np.int16)
+            audio_data = np.concatenate([preroll, audio_data])
 
-        # Resample to the device's native rate so the WSLg bridge does no
-        # rate conversion of its own (its 22050->44100 adaptive resampling
-        # colours the sound and can shift audibly partway through a response).
         play_data = _resample_to(audio_data, sample_rate, _DEVICE_RATE)
         sd.play(play_data, samplerate=_DEVICE_RATE, latency="high")
         sd.wait()
