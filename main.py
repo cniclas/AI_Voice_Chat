@@ -24,6 +24,9 @@ from tts import synthesize
 from dataclasses import dataclass
 from typing import Optional
 
+from llm import chat_completion
+from conversation_graph import build_conversation_graph
+
 RECORDING_PATH = "/tmp/voice_chat_recording.wav"
 RECORDINGS_ROOT = os.path.join(_ROOT, "recordings")
 
@@ -40,9 +43,6 @@ class Response:
     timestamp: datetime  # When this turn occurred
     audio_sample: Optional[str] = None  # Path to audio file
 
-
-OLLAMA_MODEL = "llama3.1:8b"
-OLLAMA_URL = "http://localhost:11434/api/chat"
 
 SYSTEM_PROMPT = (
     "Eres un profesor de español amable y paciente conversando con un estudiante. "
@@ -78,25 +78,6 @@ def generate_audio_filename(session_dir: Path, author: str, language: str) -> st
     """Generate a unique audio filename inside the session folder."""
     timestamp = datetime.now().strftime("%H%M%S_%f")[:-3]  # Include milliseconds
     return str(session_dir / f"{author}_{language}_{timestamp}.wav")
-
-
-def chat_completion(messages: list) -> str:
-    """Low-level Ollama chat call. Returns the assistant's text."""
-    response = requests.post(
-        OLLAMA_URL,
-        json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
-        timeout=120,
-    )
-    response.raise_for_status()
-    return response.json()["message"]["content"]
-
-
-def query_llm(user_text: str, history: list) -> str:
-    """Append the user turn, get a reply, and record it in the history."""
-    history.append({"role": "user", "content": user_text})
-    assistant_text = chat_completion(history)
-    history.append({"role": "assistant", "content": assistant_text})
-    return assistant_text
 
 
 def save_transcript(responses: list[Response], session_dir: Path) -> Path:
@@ -157,6 +138,8 @@ def main():
     session_dir = create_session_dir()
     responses: list[Response] = []  # Track all conversation exchanges
     llm_history = [{"role": "system", "content": SYSTEM_PROMPT}]  # For LLM API calls
+    conversation_graph = build_conversation_graph()
+    clarify_count = 0  # Consecutive clarification requests
 
     print("AI Spanish Teacher")
     print(f"Session folder: {session_dir}")
@@ -190,12 +173,22 @@ def main():
 
         print("Thinking...")
         try:
-            response_text = query_llm(user_text, llm_history)
+            state = conversation_graph.invoke({
+                "language": language,
+                "user_text": user_text,
+                "messages": llm_history,
+                "clarify_count": clarify_count,
+            })
         except requests.RequestException as e:
             print(f"Ollama error: {e}")
             print("Make sure Ollama is running: ollama serve\n")
             continue
-        print(f"Tutor: {response_text}")
+
+        response_text = state["response_text"]
+        llm_history = state["messages"]
+        clarify_count = state["clarify_count"]
+        label = "Tutor (didn't catch that)" if state["asked_clarification"] else "Tutor"
+        print(f"{label}: {response_text}")
 
         unique_assistant_audio = generate_audio_filename(session_dir, "assistant", language)
 

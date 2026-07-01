@@ -12,3 +12,6 @@ piper-tts
 
 # HTTP client for Ollama
 requests
+
+# Conversation flow (analyze -> respond/clarify)
+langgraph
