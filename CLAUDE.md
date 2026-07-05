@@ -16,6 +16,8 @@ python main.py
 
 ## Setup (first time)
 
+### Linux / WSL
+
 ```bash
 # Install Python dependencies into project venv
 python -m venv .venv
@@ -23,6 +25,24 @@ python -m venv .venv
 
 # Download Piper voice models
 cd piper && bash download_voices.sh && cd ..
+```
+
+### Windows (native)
+
+```powershell
+# Install Python dependencies into project venv
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+
+# Download Piper voice models
+cd piper; .\download_voices.ps1; cd ..
+```
+
+On Windows, `pyaudio` may need a pre-built wheel. If `pip install pyaudio` fails, install via:
+
+```powershell
+pip install pipwin
+pipwin install pyaudio
 ```
 
 ## Architecture

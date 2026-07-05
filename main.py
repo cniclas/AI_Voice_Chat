@@ -4,15 +4,25 @@ import glob
 import site
 import time
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
-# Inject the project venv's site-packages so the script works without activation
+# Inject the project venv's site-packages so the script works without activation.
+# Layout differs by platform: Linux/macOS use lib/pythonX.Y/site-packages,
+# native Windows uses Lib/site-packages.
 _ROOT = os.path.dirname(os.path.abspath(__file__))
-for _p in glob.glob(os.path.join(_ROOT, ".venv", "lib", "python*", "site-packages")):
-    site.addsitedir(_p)
+_SITE_PACKAGE_GLOBS = [
+    os.path.join(_ROOT, ".venv", "lib", "python*", "site-packages"),  # Linux/macOS
+    os.path.join(_ROOT, ".venv", "Lib", "site-packages"),             # Windows
+]
+for _pattern in _SITE_PACKAGE_GLOBS:
+    for _p in glob.glob(_pattern):
+        site.addsitedir(_p)
 
+import wave
 import requests
+import numpy as np
 
 sys.path.insert(0, os.path.join(_ROOT, "whisper"))
 sys.path.insert(0, os.path.join(_ROOT, "piper"))
@@ -24,7 +34,7 @@ from tts import synthesize
 from dataclasses import dataclass
 from typing import Optional
 
-RECORDING_PATH = "/tmp/voice_chat_recording.wav"
+RECORDING_PATH = os.path.join(tempfile.gettempdir(), "voice_chat_recording.wav")
 RECORDINGS_ROOT = os.path.join(_ROOT, "recordings")
 
 # Create the root recordings directory if it doesn't exist
@@ -61,8 +71,37 @@ LESSON_SYSTEM_PROMPT = (
 )
 
 
+WHISPER_SAMPLE_RATE = 16000  # Whisper expects 16 kHz mono float32
+
+
+def load_audio_16k(path: str) -> np.ndarray:
+    """Decode a PCM WAV to a mono 16 kHz float32 array without needing ffmpeg.
+
+    Whisper normally shells out to the ffmpeg CLI to decode/resample audio.
+    We record standard 16-bit PCM WAVs, so we can decode them in-process and
+    hand Whisper the array directly, keeping the app self-contained.
+    """
+    with wave.open(path, "rb") as wf:
+        sample_rate = wf.getframerate()
+        n_channels = wf.getnchannels()
+        raw = wf.readframes(wf.getnframes())
+
+    audio = np.frombuffer(raw, np.int16).astype(np.float32) / 32768.0
+    if n_channels > 1:
+        audio = audio.reshape(-1, n_channels).mean(axis=1)
+
+    if sample_rate != WHISPER_SAMPLE_RATE and audio.size:
+        target_len = int(round(audio.shape[0] * WHISPER_SAMPLE_RATE / sample_rate))
+        x_old = np.linspace(0.0, 1.0, num=audio.shape[0], endpoint=False)
+        x_new = np.linspace(0.0, 1.0, num=target_len, endpoint=False)
+        audio = np.interp(x_new, x_old, audio).astype(np.float32)
+
+    return np.ascontiguousarray(audio, dtype=np.float32)
+
+
 def transcribe_audio(audio_path: str, model, language: str = "en") -> str:
-    result = model.transcribe(audio_path, language=language)
+    audio = load_audio_16k(audio_path)
+    result = model.transcribe(audio, language=language)
     return result["text"].strip()
 
 
