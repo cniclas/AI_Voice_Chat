@@ -1,0 +1,29 @@
+[project]
+name = "ai-voice-chat"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "openai-whisper",
+    "piper-tts>=1.4.2",
+    "pyaudio>=0.2.14",
+    "requests>=2.34.2",
+    "sounddevice>=0.5.5",
+    "torch",
+]
+
+[tool.uv.workspace]
+members = [
+    "whisper",
+]
+
+# Pull the CUDA (GPU) build of PyTorch instead of the default CPU-only wheel.
+# cu126 = CUDA 12.6, which has torch 2.12.1 win_amd64 wheels and runs on the
+# RTX 3060. To switch CUDA versions, change both the index url and the tag.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+openai-whisper = { workspace = true }
+torch = { index = "pytorch-cu126" }
