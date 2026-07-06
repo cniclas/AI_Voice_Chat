@@ -39,6 +39,10 @@ _DEVICE_RATE = _output_samplerate()
 # On native Windows PortAudio primes immediately — no preroll needed.
 _PREROLL_SECONDS = 0.0 if platform.system() == "Windows" else 0.5
 
+# Piper can sound clipped at the very end of a sentence when the model stops
+# abruptly. A tiny tail of silence makes the final word feel complete.
+_TAIL_SECONDS = 0.2
+
 
 def _resample_to(audio_i16: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     """Band-limited (Fourier) resample of int16 audio to dst_rate."""
@@ -93,8 +97,11 @@ def synthesize(text: str, lang: str, output_file: str | None = None, play: bool 
             audio_data = np.concatenate([preroll, audio_data])
 
         play_data = _resample_to(audio_data, sample_rate, _DEVICE_RATE)
-        sd.play(play_data, samplerate=_DEVICE_RATE, latency="high")
-        sd.wait()
+        if _TAIL_SECONDS > 0:
+            tail = np.zeros(int(_DEVICE_RATE * _TAIL_SECONDS), dtype=np.int16)
+            play_data = np.concatenate([play_data, tail])
+
+        sd.play(play_data, samplerate=_DEVICE_RATE, blocking=True)
 
 
 if __name__ == "__main__":
