@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Spanish Teacher</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <header>
+    <h1>AI Spanish Teacher</h1>
+    <div id="phase-badge" class="phase-badge">Connecting…</div>
+  </header>
+
+  <main>
+    <section id="avatar-panel">
+      <div id="avatar" class="avatar avatar--idle">
+        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <circle class="avatar-face" cx="50" cy="50" r="42"/>
+          <circle class="avatar-eye" cx="35" cy="45" r="4"/>
+          <circle class="avatar-eye" cx="65" cy="45" r="4"/>
+          <path class="avatar-mouth" d="M 32 64 Q 50 76 68 64" fill="none" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <p id="status-text">Connecting to server…</p>
+    </section>
+
+    <section id="story-panel" hidden>
+      <h2 id="story-title"></h2>
+      <p id="story-text"></p>
+    </section>
+
+    <section id="chat-panel">
+      <div id="chat-log"></div>
+    </section>
+
+    <section id="controls" hidden>
+      <div class="device-pickers">
+        <label>Microphone
+          <select id="input-device"></select>
+        </label>
+        <label>Speaker
+          <select id="output-device"></select>
+        </label>
+      </div>
+      <div class="record-controls">
+        <button id="btn-en" class="lang-btn">🎙 English</button>
+        <button id="btn-es" class="lang-btn">🎙 Español</button>
+        <button id="btn-stop" class="stop-btn" disabled>Stop</button>
+        <button id="btn-quit" class="quit-btn">Finish session</button>
+      </div>
+    </section>
+
+    <section id="complete-panel" hidden>
+      <h2>Session complete</h2>
+      <div id="complete-links"></div>
+    </section>
+  </main>
+
+  <audio id="player"></audio>
+
+  <script src="/static/js/audio-playback.js"></script>
+  <script src="/static/js/audio-capture.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

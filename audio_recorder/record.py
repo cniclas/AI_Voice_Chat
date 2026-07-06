@@ -1,7 +1,6 @@
 import pyaudio
 import wave
-import sys
-import platform
+import msvcrt
 import threading
 
 FORMAT = pyaudio.paInt16
@@ -11,26 +10,9 @@ CHUNK = 1024
 OUTPUT_FILENAME = "recording.wav"
 
 
-if platform.system() == "Windows":
-    import msvcrt
-
-    def _getch() -> str:
-        """Read one keypress without requiring Enter (Windows)."""
-        return msvcrt.getwch()
-else:
-    import tty
-    import termios
-
-    def _getch() -> str:
-        """Read one keypress from stdin without requiring Enter (Unix)."""
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            ch = sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        return ch
+def _getch() -> str:
+    """Read one keypress without requiring Enter (Windows)."""
+    return msvcrt.getwch()
 
 
 def record_once(output_path: str = OUTPUT_FILENAME) -> tuple[str, str] | None:

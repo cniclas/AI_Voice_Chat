@@ -15,3 +15,7 @@ requests
 
 # Workflow engine for session setup/analysis graphs
 langgraph
+
+# Browser UI server
+fastapi
+uvicorn[standard]
