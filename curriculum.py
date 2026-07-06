@@ -14,7 +14,7 @@ OLLAMA_MODEL = "llama3.1:8b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_NUM_CTX = 8192  # default 2048 would overflow once article+story context is added
 
-WIKI_FEED_URL = "https://en.wikipedia.org/api/rest_v1/feed/featured/{year:04d}/{month:02d}/{day:02d}"
+WIKI_ONTHISDAY_URL = "https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/{month:02d}/{day:02d}"
 WIKI_ACTION_API_URL = "https://en.wikipedia.org/w/api.php"
 WIKI_HEADERS = {
     "User-Agent": "AI_Voice_Chat/0.1 (personal language-learning app; niclas.carlstrom88@gmail.com)",
@@ -27,6 +27,9 @@ PROFILE_PATH = Path(_ROOT) / "recordings" / "student_profile.json"
 MAX_CANDIDATES = 10  # candidates offered to the selection LLM
 ARTICLE_EXTRACT_CHARS = 3000  # plaintext extract fed to story generation
 STORY_WORDS = "entre 150 y 200 palabras"
+
+PRE1950_YEAR_CUTOFF = 1950  # bias story topics toward older historical events
+MIN_PRE1950_POOL = 3  # below this, fall back to the full day's pool rather than starve selection
 
 
 # ---------------------------------------------------------------------------
@@ -78,38 +81,38 @@ def _page_to_candidate(page: dict, source: str) -> dict:
     }
 
 
-def fetch_featured_candidates(today: date | None = None) -> list[dict]:
-    """Fetch English Wikipedia's daily featured-content feed and flatten it
-    into candidate dicts: {"title", "extract", "source"}.
+def fetch_onthisday_candidates(today: date | None = None) -> list[dict]:
+    """Fetch English Wikipedia's "on this day" events feed for today's
+    calendar date (year-independent) and flatten it into candidate dicts:
+    {"title", "extract", "source", "year"}.
+
+    Biases toward events older than PRE1950_YEAR_CUTOFF, since older
+    historical events tend to make richer, more story-friendly material.
+    Falls back to the full deduped pool if too few pre-cutoff candidates
+    exist for the day, so sparse days never starve article selection.
 
     Raises requests.RequestException on network/HTTP failure, ValueError if
     the feed yields no usable candidates.
     """
     d = today or date.today()
-    url = WIKI_FEED_URL.format(year=d.year, month=d.month, day=d.day)
+    url = WIKI_ONTHISDAY_URL.format(month=d.month, day=d.day)
     response = requests.get(url, headers=WIKI_HEADERS, timeout=WIKI_TIMEOUT)
     response.raise_for_status()
     data = response.json()
 
     candidates = []
-
-    tfa = data.get("tfa")
-    if tfa:
-        candidates.append(_page_to_candidate(tfa, "featured article"))
-
-    for story in data.get("news", []):
-        links = story.get("links") or []
-        if links:
-            candidates.append(_page_to_candidate(links[0], "in the news"))
-
-    for event in data.get("onthisday", []):
+    for event in data.get("events", []):
         pages = event.get("pages") or []
-        if pages:
-            candidate = _page_to_candidate(pages[0], "on this day")
-            event_text = event.get("text", "")
-            if event_text:
-                candidate["extract"] = f"On this day: {event_text} {candidate['extract']}"
-            candidates.append(candidate)
+        if not pages:
+            continue
+        candidate = _page_to_candidate(pages[0], "on this day")
+        year = event.get("year")
+        event_text = event.get("text", "")
+        if event_text:
+            year_label = f" ({year})" if year is not None else ""
+            candidate["extract"] = f"On this day{year_label}: {event_text} {candidate['extract']}"
+        candidate["year"] = year
+        candidates.append(candidate)
 
     seen_titles = set()
     deduped = []
@@ -121,10 +124,13 @@ def fetch_featured_candidates(today: date | None = None) -> list[dict]:
         c["extract"] = c["extract"][:300]
         deduped.append(c)
 
-    deduped = deduped[:MAX_CANDIDATES]
     if not deduped:
         raise ValueError("empty feed")
-    return deduped
+
+    pre_cutoff = [c for c in deduped if c.get("year") is not None and c["year"] < PRE1950_YEAR_CUTOFF]
+    pool = pre_cutoff if len(pre_cutoff) >= MIN_PRE1950_POOL else deduped
+
+    return pool[:MAX_CANDIDATES]
 
 
 def fetch_article_extract(title: str, fallback_extract: str = "", max_chars: int = ARTICLE_EXTRACT_CHARS) -> str:
@@ -156,7 +162,8 @@ def fetch_article_extract(title: str, fallback_extract: str = "", max_chars: int
 
 SELECTION_SYSTEM_PROMPT = (
     "You are choosing a topic for a Spanish-language learning story. "
-    "You will be given a numbered list of today's featured Wikipedia topics. "
+    "You will be given a numbered list of historical events that happened on "
+    "this day, each linked to a Wikipedia topic. "
     "Pick the ONE that would make the most engaging short story for a language "
     "learner: prefer concrete people, places, animals, events, or discoveries "
     "over abstract, technical, or list-like topics. Avoid topics similar to "
@@ -191,7 +198,7 @@ def _recent_titles(profile: dict, n: int = 15) -> list[str]:
 
 def select_article(candidates: list[dict], profile: dict) -> dict:
     """Pick the most story-friendly candidate. Falls back to candidates[0]
-    (the featured article) on any parse/range failure."""
+    on any parse/range failure."""
     covered = {t.casefold() for t in _recent_titles(profile, n=1000)}
     filtered = [c for c in candidates if c["title"].casefold() not in covered]
     pool = filtered or candidates
@@ -215,7 +222,7 @@ def select_article(candidates: list[dict], profile: dict) -> dict:
         print(f"Today's topic: {chosen['title']} ({chosen['source']}) — {data.get('reason', '')}")
         return chosen
     except (requests.RequestException, ValueError, KeyError, TypeError) as e:
-        print(f"Warning: article selection failed ({e}); using today's featured article.")
+        print(f"Warning: article selection failed ({e}); using the first candidate.")
         return pool[0]
 
 

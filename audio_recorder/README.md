@@ -11,7 +11,7 @@ A simple push-to-talk audio recording script using Python.
 
 ## Requirements
 
-- Python 3.x
+- Python 3.x (Windows only)
 - Microphone access
 
 ## Installation
@@ -19,11 +19,6 @@ A simple push-to-talk audio recording script using Python.
 1. Install dependencies:
    ```
    pip install -r requirements.txt
-   ```
-
-2. On Linux, you may need to install PyAudio system dependencies:
-   ```
-   sudo apt-get install python3-pyaudio python3-dev portaudio19-dev
    ```
 
 ## Usage
@@ -40,4 +35,4 @@ python record.py
 ## Notes
 
 - Audio is recorded in mono at 44.1kHz
-- The script uses pynput for keyboard detection and pyaudio for audio recording
+- The script uses `msvcrt` for keyboard detection and `pyaudio` for audio recording

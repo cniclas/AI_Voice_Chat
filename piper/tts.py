@@ -1,7 +1,9 @@
+import io
 import os
-import platform
 import tempfile
 import wave
+from pathlib import Path
+
 import numpy as np
 import sounddevice as sd
 from piper.config import SynthesisConfig
@@ -28,16 +30,8 @@ def _output_samplerate(default: int = 44100) -> int:
 
 
 # Pre-resample to the device's native rate to avoid quality loss from the OS
-# resampler. On WSL the bridge uses a low-quality adaptive converter; on
-# native Windows PortAudio handles it, but explicit resampling is still
-# cleaner.
+# resampler.
 _DEVICE_RATE = _output_samplerate()
-
-# On WSL the audio bridge (PulseAudio → WSLg → Windows) has a cold-start
-# underrun in the first ~100-300 ms, producing a harsh onset. Prepend silence
-# so the transient lands in the preroll, not the first word.
-# On native Windows PortAudio primes immediately — no preroll needed.
-_PREROLL_SECONDS = 0.0 if platform.system() == "Windows" else 0.5
 
 # Piper can sound clipped at the very end of a sentence when the model stops
 # abruptly. A tiny tail of silence makes the final word feel complete.
@@ -58,10 +52,15 @@ def _resample_to(audio_i16: np.ndarray, src_rate: int, dst_rate: int) -> np.ndar
     y = np.fft.irfft(out, m) * (m / n)
     return np.clip(np.round(y), -32768, 32767).astype(np.int16)
 
-def synthesize(text: str, lang: str, output_file: str | None = None, play: bool = True):
+def synthesize(text: str, lang: str, output_file: str | None = None, play: bool = True) -> bytes | None:
     """
     Synthesize text using the given language ("en" or "es").
-    Saves to a WAV file and/or plays the audio.
+    Saves to a WAV file and/or plays the audio locally.
+
+    When play=False, returns the synthesized WAV bytes instead of playing
+    them locally — used by the browser UI, which owns audio playback
+    client-side (so the user can route TTS output to a different device
+    than the one used for microphone capture).
     """
     voice = voices[lang]
 
@@ -73,35 +72,35 @@ def synthesize(text: str, lang: str, output_file: str | None = None, play: bool 
             voice.synthesize_wav(text, wav_file, syn_config=syn_config)
         print(f"Saved to {output_file}")
 
-    # Play audio if requested
-    if play:
-        playback_file = output_file if output_file else os.path.join(
-            tempfile.gettempdir(), "piper_playback.wav"
-        )
+    if not play:
+        if output_file:
+            return Path(output_file).read_bytes()
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wav_file:
+            voice.synthesize_wav(text, wav_file, syn_config=syn_config)
+        return buf.getvalue()
 
-        if not output_file:
-            with wave.open(playback_file, "wb") as wav_file:
-                voice.synthesize_wav(text, wav_file, syn_config=syn_config)
+    # Play audio locally (CLI path)
+    playback_file = output_file if output_file else os.path.join(
+        tempfile.gettempdir(), "piper_playback.wav"
+    )
 
-        with wave.open(playback_file, "rb") as wav_file:
-            sample_rate = wav_file.getframerate()
-            frames = wav_file.readframes(wav_file.getnframes())
-            audio_data = np.frombuffer(frames, dtype=np.int16)
+    if not output_file:
+        with wave.open(playback_file, "wb") as wav_file:
+            voice.synthesize_wav(text, wav_file, syn_config=syn_config)
 
-        # On WSL2 the audio bridge cold-starts with an underrun; prepend
-        # silence so the distortion lands in the preroll, not the first word.
-        # _PREROLL_SECONDS is 0 on native Windows where PortAudio primes
-        # immediately.
-        if _PREROLL_SECONDS > 0:
-            preroll = np.zeros(int(sample_rate * _PREROLL_SECONDS), dtype=np.int16)
-            audio_data = np.concatenate([preroll, audio_data])
+    with wave.open(playback_file, "rb") as wav_file:
+        sample_rate = wav_file.getframerate()
+        frames = wav_file.readframes(wav_file.getnframes())
+        audio_data = np.frombuffer(frames, dtype=np.int16)
 
-        play_data = _resample_to(audio_data, sample_rate, _DEVICE_RATE)
-        if _TAIL_SECONDS > 0:
-            tail = np.zeros(int(_DEVICE_RATE * _TAIL_SECONDS), dtype=np.int16)
-            play_data = np.concatenate([play_data, tail])
+    play_data = _resample_to(audio_data, sample_rate, _DEVICE_RATE)
+    if _TAIL_SECONDS > 0:
+        tail = np.zeros(int(_DEVICE_RATE * _TAIL_SECONDS), dtype=np.int16)
+        play_data = np.concatenate([play_data, tail])
 
-        sd.play(play_data, samplerate=_DEVICE_RATE, blocking=True)
+    sd.play(play_data, samplerate=_DEVICE_RATE, blocking=True)
+    return None
 
 
 if __name__ == "__main__":

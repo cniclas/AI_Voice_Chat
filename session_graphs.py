@@ -52,9 +52,9 @@ def load_profile_node(state: SessionState) -> dict:
     return {"profile": curriculum.load_profile()}
 
 
-def fetch_featured_feed_node(state: SessionState) -> dict:
+def fetch_onthisday_feed_node(state: SessionState) -> dict:
     try:
-        return {"candidates": curriculum.fetch_featured_candidates()}
+        return {"candidates": curriculum.fetch_onthisday_candidates()}
     except (requests.RequestException, ValueError) as e:
         return {"setup_failed": f"Wikipedia feed unavailable: {e}"}
 
@@ -131,7 +131,7 @@ def _skip_on_failure(next_node: str):
 def _build_setup_graph():
     g = StateGraph(SessionState)
     g.add_node("LoadProfile", load_profile_node)
-    g.add_node("FetchFeaturedFeed", fetch_featured_feed_node)
+    g.add_node("FetchOnThisDayFeed", fetch_onthisday_feed_node)
     g.add_node("ExtractCandidates", extract_candidates_node)
     g.add_node("SelectArticle", select_article_node)
     g.add_node("FetchArticleDetails", fetch_article_details_node)
@@ -140,8 +140,8 @@ def _build_setup_graph():
     g.add_node("RecordArticleCovered", record_article_covered_node)
 
     g.add_edge(START, "LoadProfile")
-    g.add_edge("LoadProfile", "FetchFeaturedFeed")
-    g.add_conditional_edges("FetchFeaturedFeed", _skip_on_failure("ExtractCandidates"),
+    g.add_edge("LoadProfile", "FetchOnThisDayFeed")
+    g.add_conditional_edges("FetchOnThisDayFeed", _skip_on_failure("ExtractCandidates"),
                             ["ExtractCandidates", END])
     g.add_edge("ExtractCandidates", "SelectArticle")
     g.add_conditional_edges("SelectArticle", _skip_on_failure("FetchArticleDetails"),
