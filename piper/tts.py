@@ -4,9 +4,13 @@ import tempfile
 import wave
 import numpy as np
 import sounddevice as sd
+from piper.config import SynthesisConfig
 from piper.voice import PiperVoice
 
 _VOICES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voices")
+
+# Make the synthesized voice slightly slower and more natural for speech playback.
+_SPEED_SCALE = 1.08
 
 # Load both voices upfront
 voices = {
@@ -57,10 +61,12 @@ def synthesize(text: str, lang: str, output_file: str | None = None, play: bool 
     """
     voice = voices[lang]
 
+    syn_config = SynthesisConfig(length_scale=_SPEED_SCALE)
+
     # Generate audio file
     if output_file:
         with wave.open(output_file, "wb") as wav_file:
-            voice.synthesize_wav(text, wav_file)
+            voice.synthesize_wav(text, wav_file, syn_config=syn_config)
         print(f"Saved to {output_file}")
 
     # Play audio if requested
@@ -71,7 +77,7 @@ def synthesize(text: str, lang: str, output_file: str | None = None, play: bool 
 
         if not output_file:
             with wave.open(playback_file, "wb") as wav_file:
-                voice.synthesize_wav(text, wav_file)
+                voice.synthesize_wav(text, wav_file, syn_config=syn_config)
 
         with wave.open(playback_file, "rb") as wav_file:
             sample_rate = wav_file.getframerate()

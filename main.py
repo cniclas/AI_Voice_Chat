@@ -190,7 +190,7 @@ def save_lesson(lesson: str, session_dir: Path) -> Path:
 
 def main():
     print("Loading Whisper model...")
-    whisper_model = whisper.load_model("base")
+    whisper_model = whisper.load_model("large-v3")
     print("Whisper ready.\n")
 
     session_dir = create_session_dir()
@@ -249,6 +249,7 @@ def main():
         print("Speaking...")
         time.sleep(0.5)  # Buffer delay before playback
         synthesize(response_text, lang=language, output_file=unique_assistant_audio, play=True)
+        time.sleep(0.5)
         print()
 
     # Conversation finished — produce transcript and lesson
