@@ -47,17 +47,19 @@ pipwin install pyaudio
 
 ## Architecture
 
-The pipeline runs sequentially in a loop inside `main.py`:
+Each session run by `main.py` follows a five-phase arc:
 
-1. **Record** — `audio_recorder/record.py:record_once()` does push-to-talk via raw terminal keypress (`e`=English, `s`=Spanish, SPACE=stop, `q`=quit). Returns `(language, wav_path)`.
-2. **Transcribe** — Whisper (`whisper/`) is installed as a local editable package (`-e ./whisper` in `requirements.txt`). The base model is loaded once at startup.
-3. **Generate** — `query_llm()` in `main.py` calls a local Ollama instance (`llama3.1:8b`) via HTTP at `localhost:11434`.
-4. **Speak** — `piper/tts.py:synthesize()` loads both voice models (`en_US-lessac-medium`, `es_MX-claude-high`) once at import time and writes/plays WAV files via `sounddevice`.
+1. **Prepare** — `curriculum.py` loads the persistent student profile (`recordings/student_profile.json`), fetches English Wikipedia's daily featured-content feed, has the LLM pick the most story-friendly candidate (avoiding recently covered topics and disturbing subject matter), fetches a fuller plaintext extract, and generates a graded ~150-200-word semi-fictional Spanish story from it (weaving in vocabulary the student needs to practice). Saved to the session folder as `article.md`/`story.md`. On any failure (Wikipedia unreachable, Ollama down, bad JSON) this degrades to a plain conversation with a printed warning — it never crashes.
+2. **Narrate** — the story is read aloud once via `piper/tts.py:synthesize()` (Spanish voice) to `story_es.wav`, before the recording loop starts.
+3. **Converse** — the existing push-to-talk loop: `audio_recorder/record.py:record_once()` does push-to-talk via raw terminal keypress (`e`=English, `s`=Spanish, SPACE=stop, `q`=quit) and returns `(language, wav_path)`; Whisper (`whisper/`, installed as a local editable package, loaded once at startup) transcribes; `query_llm()` in `main.py` calls a local Ollama instance (`llama3.1:8b` via HTTP at `localhost:11434`) with a per-turn language reminder injected so the tutor always replies in whichever language (`en`/`es`) the student just used; `synthesize()` speaks the reply. Each turn is saved as a uniquely timestamped WAV in the session folder and tracked in a `Response` dataclass list.
+4. **Analyze** — at session end, `curriculum.analyze_weaknesses()` asks the LLM (JSON-constrained output) to identify concrete grammar/vocabulary weaknesses from the transcript, saved as `analysis.json`.
+5. **Homework + persist** — `curriculum.generate_homework()` turns the analysis into a targeted `homework.md`; `curriculum.merge_analysis_into_profile()` updates the persistent profile (recurring weaknesses, vocab to practice, covered articles) so future sessions avoid repeat topics and reinforce chronic mistakes.
 
-Each user and assistant turn is saved as a uniquely timestamped WAV in `recordings/` and tracked in a `Response` dataclass list.
+`curriculum.py` owns all Wikipedia/Ollama-content logic (fetching, prompts, JSON schemas, profile persistence); `main.py` stays the audio-session orchestrator.
 
 ## Key constraints
 
-- Only two languages are supported: `"en"` and `"es"`. The language selection happens at record time and flows through the entire pipeline.
+- Only two languages are supported: `"en"` and `"es"`. The language selection happens at record time and flows through the entire pipeline; the tutor mirrors it per turn (fixed from an earlier bug where it always replied in Spanish).
 - Piper voices must be present in `piper/voices/` before `tts.py` can be imported — it loads them at module level.
 - `audio_recorder/` has its own `venv` and `requirements.txt` (with `pynput`) that is separate from the root venv; the root `requirements.txt` uses `pyaudio` instead.
+- `recordings/student_profile.json` is the one piece of cross-session state; it's gitignored (personal learning data) along with the rest of `recordings/`.

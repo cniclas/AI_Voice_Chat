@@ -20,6 +20,7 @@ for _pattern in _SITE_PACKAGE_GLOBS:
     for _p in glob.glob(_pattern):
         site.addsitedir(_p)
 
+import json
 import wave
 import requests
 import numpy as np
@@ -33,6 +34,23 @@ from record import record_once
 from tts import synthesize
 from dataclasses import dataclass
 from typing import Optional
+
+from curriculum import (
+    chat_completion,
+    fetch_featured_candidates,
+    fetch_article_extract,
+    select_article,
+    generate_story,
+    analyze_weaknesses,
+    generate_homework,
+    load_profile,
+    save_profile,
+    record_article_covered,
+    merge_analysis_into_profile,
+    bump_vocab_targeted,
+    top_vocab_to_practice,
+    top_weaknesses,
+)
 
 RECORDING_PATH = os.path.join(tempfile.gettempdir(), "voice_chat_recording.wav")
 RECORDINGS_ROOT = os.path.join(_ROOT, "recordings")
@@ -51,24 +69,30 @@ class Response:
     audio_sample: Optional[str] = None  # Path to audio file
 
 
-OLLAMA_MODEL = "llama3.1:8b"
-OLLAMA_URL = "http://localhost:11434/api/chat"
-
-SYSTEM_PROMPT = (
+BASE_SYSTEM_PROMPT = (
     "Eres un profesor de español amable y paciente conversando con un estudiante. "
-    "Responde siempre en español, de forma natural y conversacional, con frases "
+    "El estudiante puede hablar en inglés o en español; responde SIEMPRE en el "
+    "mismo idioma que usó el estudiante en su último mensaje (se te indicará "
+    "antes de cada mensaje). Habla de forma natural y conversacional, con frases "
     "cortas porque tus respuestas se leerán en voz alta. Mantén la conversación "
     "fluida y haz preguntas para que el estudiante siga hablando. No corrijas los "
-    "errores en medio de la conversación; las correcciones se harán en una lección "
-    "al final."
+    "errores en medio de la conversación; las correcciones se harán al final."
 )
 
-LESSON_SYSTEM_PROMPT = (
-    "You are an expert Spanish teacher. You will be given the transcript of a "
-    "spoken conversation between a student (the user) and a Spanish tutor (the "
-    "assistant). Analyze the student's Spanish and write a focused lesson in "
-    "Markdown."
+STORY_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT + (
+    "\n\nHoy la conversación gira en torno a un cuento que el estudiante acaba "
+    "de escuchar, basado en un artículo de Wikipedia. Haz preguntas sobre el "
+    "cuento, su tema y las opiniones del estudiante. Usa este contexto:\n\n"
+    "ARTÍCULO ({article_title}):\n{article_extract}\n\n"
+    "CUENTO:\n{story}"
 )
+
+CONTEXT_EXTRACT_CHARS = 1200  # article extract length embedded in the system prompt
+
+LANG_REMINDER = {
+    "en": "The student's last message is in English. Reply in English.",
+    "es": "El último mensaje del estudiante está en español. Responde en español.",
+}
 
 
 WHISPER_SAMPLE_RATE = 16000  # Whisper expects 16 kHz mono float32
@@ -119,21 +143,19 @@ def generate_audio_filename(session_dir: Path, author: str, language: str) -> st
     return str(session_dir / f"{author}_{language}_{timestamp}.wav")
 
 
-def chat_completion(messages: list) -> str:
-    """Low-level Ollama chat call. Returns the assistant's text."""
-    response = requests.post(
-        OLLAMA_URL,
-        json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
-        timeout=120,
-    )
-    response.raise_for_status()
-    return response.json()["message"]["content"]
+def query_llm(user_text: str, language: str, history: list) -> str:
+    """Append the user turn, get a reply, and record it in the history.
 
-
-def query_llm(user_text: str, history: list) -> str:
-    """Append the user turn, get a reply, and record it in the history."""
+    A per-turn language reminder is injected into the outgoing message list
+    (never stored in `history`) so the tutor mirrors whichever language the
+    student just spoke, instead of always answering in Spanish.
+    """
     history.append({"role": "user", "content": user_text})
-    assistant_text = chat_completion(history)
+    messages = history[:-1] + [
+        {"role": "system", "content": LANG_REMINDER[language]},
+        history[-1],
+    ]
+    assistant_text = chat_completion(messages)
     history.append({"role": "assistant", "content": assistant_text})
     return assistant_text
 
@@ -160,45 +182,84 @@ def format_transcript_for_lesson(responses: list[Response]) -> str:
     return "\n".join(lines)
 
 
-def generate_lesson(responses: list[Response]) -> str:
-    """Ask the LLM to build a lesson from the conversation transcript."""
-    transcript = format_transcript_for_lesson(responses)
-    user_prompt = (
-        "Here is the conversation transcript:\n\n"
-        f"{transcript}\n\n"
-        "Write a Spanish lesson in Markdown based on the student's turns. Include:\n"
-        "1. A short summary of what the conversation was about.\n"
-        "2. The main grammar and vocabulary mistakes the student made, each with "
-        "the correction and a brief explanation in English.\n"
-        "3. Useful vocabulary or expressions the student could have used.\n"
-        "4. 3-5 practice exercises targeting the student's weaknesses.\n\n"
-        "Write explanations in English, but keep all Spanish examples in Spanish."
-    )
-    messages = [
-        {"role": "system", "content": LESSON_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
-    return chat_completion(messages)
-
-
-def save_lesson(lesson: str, session_dir: Path) -> Path:
-    """Write the generated lesson to lesson.md."""
-    path = session_dir / "lesson.md"
-    path.write_text(f"# Spanish Lesson — {session_dir.name}\n\n{lesson}\n", encoding="utf-8")
+def save_session_doc(session_dir: Path, filename: str, title: str, body: str) -> Path:
+    """Generic writer used for article.md / story.md / homework.md."""
+    path = session_dir / filename
+    path.write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
     return path
 
 
+def prepare_daily_story(profile: dict, session_dir: Path) -> dict | None:
+    """Fetch today's Wikipedia article, generate a Spanish story from it, and
+    save article.md/story.md. Returns None (after printing a warning) if any
+    step fails, so the caller can fall back to a plain conversation."""
+    try:
+        candidates = fetch_featured_candidates()
+        chosen = select_article(candidates, profile)
+        extract = fetch_article_extract(chosen["title"], fallback_extract=chosen["extract"])
+        practice_words = top_vocab_to_practice(profile)
+        story = generate_story(chosen["title"], extract, profile)
+
+        save_session_doc(session_dir, "article.md", chosen["title"],
+                          f"**Source:** {chosen['source']}\n\n{extract}")
+        save_session_doc(session_dir, "story.md", story["title"], story["story"])
+
+        return {
+            "article_title": chosen["title"],
+            "article_extract": extract[:CONTEXT_EXTRACT_CHARS],
+            "story_title": story["title"],
+            "story": story["story"],
+            "practice_words": practice_words,
+        }
+    except (requests.RequestException, ValueError, KeyError) as e:
+        print(f"Could not prepare today's story ({e}); starting a plain conversation instead.")
+        return None
+
+
 def main():
+    session_dir = create_session_dir()
+    responses: list[Response] = []  # Track all conversation exchanges
+    profile = load_profile()
+
+    print("AI Spanish Teacher")
+    print(f"Session folder: {session_dir}")
+
+    print("Fetching today's Wikipedia story...")
+    daily = prepare_daily_story(profile, session_dir)
+
     print("Loading Whisper model...")
     whisper_model = whisper.load_model("large-v3")
     print("Whisper ready.\n")
 
-    session_dir = create_session_dir()
-    responses: list[Response] = []  # Track all conversation exchanges
-    llm_history = [{"role": "system", "content": SYSTEM_PROMPT}]  # For LLM API calls
+    if daily:
+        print(f"\nCuento de hoy: {daily['story_title']}\n\n{daily['story']}\n")
+        print("Reading today's story aloud...")
+        time.sleep(0.5)
+        try:
+            synthesize(
+                f"{daily['story_title']}. {daily['story']}",
+                lang="es",
+                output_file=str(session_dir / "story_es.wav"),
+                play=True,
+            )
+        except Exception as e:
+            print(f"Warning: could not narrate the story ({e}); continuing anyway.")
+        time.sleep(0.5)
+        record_article_covered(profile, daily["article_title"], session_dir.name)
+        bump_vocab_targeted(profile, daily["practice_words"])
+        save_profile(profile)  # eager write — an early 'q' still marks the article used
 
-    print("AI Spanish Teacher")
-    print(f"Session folder: {session_dir}")
+        system_prompt = STORY_SYSTEM_PROMPT_TEMPLATE.format(
+            article_title=daily["article_title"],
+            article_extract=daily["article_extract"],
+            story=daily["story"],
+        )
+    else:
+        print("(No Wikipedia story available today — starting a plain conversation.)")
+        system_prompt = BASE_SYSTEM_PROMPT
+
+    llm_history = [{"role": "system", "content": system_prompt}]  # For LLM API calls
+
     print("Press 'e' for English or 's' for Spanish to start recording. Press SPACE to stop. Press 'q' to quit.\n")
 
     while True:
@@ -229,7 +290,7 @@ def main():
 
         print("Thinking...")
         try:
-            response_text = query_llm(user_text, llm_history)
+            response_text = query_llm(user_text, language, llm_history)
         except requests.RequestException as e:
             print(f"Ollama error: {e}")
             print("Make sure Ollama is running: ollama serve\n")
@@ -264,13 +325,29 @@ def main():
     transcript_path = save_transcript(responses, session_dir)
     print(f"\nTranscript saved to {transcript_path}")
 
-    print("Analyzing the conversation and building your lesson (this may take a moment)...")
+    print("Analyzing your Spanish (this may take a moment)...")
+    transcript_text = format_transcript_for_lesson(responses)
+    recurring = top_weaknesses(profile)  # read BEFORE merging today's findings
+    analysis = None
     try:
-        lesson = generate_lesson(responses)
-        lesson_path = save_lesson(lesson, session_dir)
-        print(f"Lesson saved to {lesson_path}")
+        analysis = analyze_weaknesses(transcript_text)
+        (session_dir / "analysis.json").write_text(
+            json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8")
+    except (requests.RequestException, ValueError) as e:
+        print(f"Analysis unavailable ({e}); homework will use the raw transcript.")
+
+    try:
+        homework = generate_homework(
+            analysis, transcript_text,
+            daily["story_title"] if daily else None, recurring,
+        )
+        hw_path = save_session_doc(session_dir, "homework.md", f"Homework — {session_dir.name}", homework)
+        print(f"Homework saved to {hw_path}")
     except requests.RequestException as e:
-        print(f"Could not generate lesson (Ollama error): {e}")
+        print(f"Could not generate homework (Ollama error): {e}")
+
+    merge_analysis_into_profile(profile, analysis)  # analysis=None => article-only update
+    save_profile(profile)
 
     print("¡Hasta luego!")
 
