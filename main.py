@@ -8,6 +8,13 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+# Windows terminals often default to a legacy codepage (e.g. cp1252) that
+# can't encode arbitrary Wikipedia-article/story text (accents, "đ", etc.).
+# Force UTF-8 on stdout/stderr so printing never crashes the session.
+if sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Inject the project venv's site-packages so the script works without activation.
 # Layout differs by platform: Linux/macOS use lib/pythonX.Y/site-packages,
 # native Windows uses Lib/site-packages.
@@ -20,7 +27,6 @@ for _pattern in _SITE_PACKAGE_GLOBS:
     for _p in glob.glob(_pattern):
         site.addsitedir(_p)
 
-import json
 import wave
 import requests
 import numpy as np
@@ -35,22 +41,8 @@ from tts import synthesize
 from dataclasses import dataclass
 from typing import Optional
 
-from curriculum import (
-    chat_completion,
-    fetch_featured_candidates,
-    fetch_article_extract,
-    select_article,
-    generate_story,
-    analyze_weaknesses,
-    generate_homework,
-    load_profile,
-    save_profile,
-    record_article_covered,
-    merge_analysis_into_profile,
-    bump_vocab_targeted,
-    top_vocab_to_practice,
-    top_weaknesses,
-)
+from curriculum import chat_completion
+from session_graphs import session_setup_graph, session_analysis_graph
 
 RECORDING_PATH = os.path.join(tempfile.gettempdir(), "voice_chat_recording.wav")
 RECORDINGS_ROOT = os.path.join(_ROOT, "recordings")
@@ -182,50 +174,28 @@ def format_transcript_for_lesson(responses: list[Response]) -> str:
     return "\n".join(lines)
 
 
-def save_session_doc(session_dir: Path, filename: str, title: str, body: str) -> Path:
-    """Generic writer used for article.md / story.md / homework.md."""
-    path = session_dir / filename
-    path.write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
-    return path
-
-
-def prepare_daily_story(profile: dict, session_dir: Path) -> dict | None:
-    """Fetch today's Wikipedia article, generate a Spanish story from it, and
-    save article.md/story.md. Returns None (after printing a warning) if any
-    step fails, so the caller can fall back to a plain conversation."""
-    try:
-        candidates = fetch_featured_candidates()
-        chosen = select_article(candidates, profile)
-        extract = fetch_article_extract(chosen["title"], fallback_extract=chosen["extract"])
-        practice_words = top_vocab_to_practice(profile)
-        story = generate_story(chosen["title"], extract, profile)
-
-        save_session_doc(session_dir, "article.md", chosen["title"],
-                          f"**Source:** {chosen['source']}\n\n{extract}")
-        save_session_doc(session_dir, "story.md", story["title"], story["story"])
-
-        return {
-            "article_title": chosen["title"],
-            "article_extract": extract[:CONTEXT_EXTRACT_CHARS],
-            "story_title": story["title"],
-            "story": story["story"],
-            "practice_words": practice_words,
-        }
-    except (requests.RequestException, ValueError, KeyError) as e:
-        print(f"Could not prepare today's story ({e}); starting a plain conversation instead.")
-        return None
-
-
 def main():
     session_dir = create_session_dir()
     responses: list[Response] = []  # Track all conversation exchanges
-    profile = load_profile()
 
     print("AI Spanish Teacher")
     print(f"Session folder: {session_dir}")
 
     print("Fetching today's Wikipedia story...")
-    daily = prepare_daily_story(profile, session_dir)
+    setup_state = session_setup_graph.invoke({"session_dir": str(session_dir)})
+    profile = setup_state["profile"]
+    daily = None
+    if setup_state.get("setup_failed"):
+        print(f"Could not prepare today's story ({setup_state['setup_failed']}); "
+              "starting a plain conversation instead.")
+    else:
+        story = setup_state["story"]
+        daily = {
+            "article_title": setup_state["article"]["title"],
+            "article_extract": setup_state["article_extract"],
+            "story_title": story["title"],
+            "story": story["story"],
+        }
 
     print("Loading Whisper model...")
     whisper_model = whisper.load_model("large-v3")
@@ -245,13 +215,10 @@ def main():
         except Exception as e:
             print(f"Warning: could not narrate the story ({e}); continuing anyway.")
         time.sleep(0.5)
-        record_article_covered(profile, daily["article_title"], session_dir.name)
-        bump_vocab_targeted(profile, daily["practice_words"])
-        save_profile(profile)  # eager write — an early 'q' still marks the article used
 
         system_prompt = STORY_SYSTEM_PROMPT_TEMPLATE.format(
             article_title=daily["article_title"],
-            article_extract=daily["article_extract"],
+            article_extract=daily["article_extract"][:CONTEXT_EXTRACT_CHARS],
             story=daily["story"],
         )
     else:
@@ -327,27 +294,12 @@ def main():
 
     print("Analyzing your Spanish (this may take a moment)...")
     transcript_text = format_transcript_for_lesson(responses)
-    recurring = top_weaknesses(profile)  # read BEFORE merging today's findings
-    analysis = None
-    try:
-        analysis = analyze_weaknesses(transcript_text)
-        (session_dir / "analysis.json").write_text(
-            json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8")
-    except (requests.RequestException, ValueError) as e:
-        print(f"Analysis unavailable ({e}); homework will use the raw transcript.")
-
-    try:
-        homework = generate_homework(
-            analysis, transcript_text,
-            daily["story_title"] if daily else None, recurring,
-        )
-        hw_path = save_session_doc(session_dir, "homework.md", f"Homework — {session_dir.name}", homework)
-        print(f"Homework saved to {hw_path}")
-    except requests.RequestException as e:
-        print(f"Could not generate homework (Ollama error): {e}")
-
-    merge_analysis_into_profile(profile, analysis)  # analysis=None => article-only update
-    save_profile(profile)
+    session_analysis_graph.invoke({
+        "session_dir": str(session_dir),
+        "profile": profile,
+        "transcript_text": transcript_text,
+        "story": setup_state.get("story"),
+    })
 
     print("¡Hasta luego!")
 

@@ -421,6 +421,13 @@ def generate_homework(analysis: dict | None, transcript_text: str,
     return chat_completion(messages)
 
 
+def save_session_doc(session_dir: Path, filename: str, title: str, body: str) -> Path:
+    """Generic writer used for article.md / story.md / homework.md."""
+    path = session_dir / filename
+    path.write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Student profile persistence
 # ---------------------------------------------------------------------------

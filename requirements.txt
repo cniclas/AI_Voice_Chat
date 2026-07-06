@@ -12,3 +12,6 @@ piper-tts
 
 # HTTP client for Ollama
 requests
+
+# Workflow engine for session setup/analysis graphs
+langgraph
