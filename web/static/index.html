@@ -9,10 +9,32 @@
 <body>
   <header>
     <h1>AI Spanish Teacher</h1>
-    <div id="phase-badge" class="phase-badge">Connecting…</div>
+    <div id="phase-badge" class="phase-badge">Pick a mode</div>
   </header>
 
   <main>
+    <section id="mode-panel">
+      <div class="mode-grid">
+        <button class="mode-btn" data-mode="story">
+          <strong>📖 Wikipedia story</strong>
+          <span>Hear a story from today in history, then chat about it.</span>
+        </button>
+        <button class="mode-btn" data-mode="homework">
+          <strong>📝 Homework lesson</strong>
+          <span>Work through your latest homework with the tutor.</span>
+        </button>
+        <button class="mode-btn" data-mode="flashcards">
+          <strong>🃏 Flashcards</strong>
+          <span>Say the Spanish word for each English prompt.</span>
+        </button>
+        <button class="mode-btn" data-mode="fill_blanks">
+          <strong>✏️ Fill in the blanks</strong>
+          <span>Say the missing word in each sentence.</span>
+        </button>
+      </div>
+      <p class="mode-hint">Switching mode mid-session discards the current session — nothing is saved.</p>
+    </section>
+
     <section id="avatar-panel">
       <div id="avatar" class="avatar avatar--idle">
         <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
@@ -22,7 +44,7 @@
           <path class="avatar-mouth" d="M 32 64 Q 50 76 68 64" fill="none" stroke-width="4" stroke-linecap="round"/>
         </svg>
       </div>
-      <p id="status-text">Connecting to server…</p>
+      <p id="status-text">Pick a mode above to start.</p>
     </section>
 
     <section id="story-panel" hidden>
@@ -30,7 +52,20 @@
       <p id="story-text"></p>
     </section>
 
-    <section id="chat-panel">
+    <section id="exercise-panel" hidden>
+      <div class="exercise-header">
+        <h2 id="exercise-title"></h2>
+        <span id="exercise-progress" class="exercise-progress"></span>
+      </div>
+      <p id="card-main" class="card-main"></p>
+      <p id="card-hint" class="card-hint"></p>
+      <div id="judgement" class="judgement" hidden>
+        <p id="judgement-text"></p>
+      </div>
+      <button id="btn-next" class="next-btn" hidden>Next card →</button>
+    </section>
+
+    <section id="chat-panel" hidden>
       <div id="chat-log"></div>
     </section>
 
@@ -47,7 +82,8 @@
         <button id="btn-en" class="lang-btn">🎙 English</button>
         <button id="btn-es" class="lang-btn">🎙 Español</button>
         <button id="btn-stop" class="stop-btn" disabled>Stop</button>
-        <button id="btn-quit" class="quit-btn">Finish session</button>
+        <button id="btn-finish" class="finish-btn">Finish session</button>
+        <button id="btn-quit" class="quit-btn">Quit (discard)</button>
       </div>
     </section>
 

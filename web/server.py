@@ -27,12 +27,15 @@ sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "whisper"))
 sys.path.insert(0, os.path.join(_ROOT, "piper"))
 
+import webbrowser
+
 import whisper
 from fastapi import FastAPI, WebSocket, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from starlette.websockets import WebSocketDisconnect
 
-from web.session import SessionOrchestrator
+from web.session import MODE_SESSIONS
 from session_core import RECORDINGS_ROOT
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -44,6 +47,9 @@ async def lifespan(app: FastAPI):
     app.state.whisper_model = whisper.load_model("large-v3")
     app.state.whisper_lock = asyncio.Lock()
     print("Whisper ready.")
+    # Set by run.py so `python run.py` opens the UI once the server is usable.
+    if os.environ.get("AI_TUTOR_OPEN_BROWSER") == "1":
+        webbrowser.open(os.environ.get("AI_TUTOR_URL", "http://127.0.0.1:8000"))
     yield
 
 
@@ -68,6 +74,17 @@ async def session_file(session_name: str, filename: str):
 
 @app.websocket("/ws/session")
 async def ws_session(ws: WebSocket):
+    """One session per connection. The first client message picks the mode:
+    {"type": "start", "mode": "story"|"homework"|"flashcards"|"fill_blanks"}."""
     await ws.accept()
-    orchestrator = SessionOrchestrator(ws, app.state.whisper_model, app.state.whisper_lock)
+    try:
+        start = await ws.receive_json()
+    except WebSocketDisconnect:
+        return
+    session_cls = MODE_SESSIONS.get(start.get("mode")) if start.get("type") == "start" else None
+    if session_cls is None:
+        await ws.send_json({"type": "error", "message": f"Unknown mode: {start.get('mode')!r}"})
+        await ws.close()
+        return
+    orchestrator = session_cls(ws, app.state.whisper_model, app.state.whisper_lock)
     await orchestrator.run()
