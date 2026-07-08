@@ -1,24 +1,46 @@
+"""Text-to-speech via the configured TTS backend (backends.json):
+
+- local  — the bundled Piper voices in piper/voices/, loaded lazily on the
+  first synthesis call per language (so the app can start without local
+  voice files when the remote backend is configured).
+- remote — an HTTP endpoint that accepts {"text", "lang"} JSON and returns
+  WAV bytes; see remote/piper_server.py for a ready-made server.
+"""
+
 import io
 import os
-import tempfile
+import sys
 import wave
 from pathlib import Path
 
 import numpy as np
+import requests
 import sounddevice as sd
-from piper.config import SynthesisConfig
-from piper.voice import PiperVoice
 
-_VOICES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voices")
+_PIPER_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_PIPER_DIR))  # repo root, for `backends`
+
+import backends
+
+_VOICES_DIR = os.path.join(_PIPER_DIR, "voices")
+
+_VOICE_FILES = {
+    "en": "en_US-lessac-medium.onnx",
+    "es": "es_MX-claude-high.onnx",
+}
 
 # Make the synthesized voice slightly slower and more natural for speech playback.
 _SPEED_SCALE = 1.08
 
-# Load both voices upfront
-voices = {
-    "en": PiperVoice.load(os.path.join(_VOICES_DIR, "en_US-lessac-medium.onnx")),
-    "es": PiperVoice.load(os.path.join(_VOICES_DIR, "es_MX-claude-high.onnx")),
-}
+_voices: dict = {}
+
+
+def _get_voice(lang: str):
+    """Load a local Piper voice on first use and cache it."""
+    if lang not in _voices:
+        from piper.voice import PiperVoice
+        _voices[lang] = PiperVoice.load(os.path.join(_VOICES_DIR, _VOICE_FILES[lang]))
+    return _voices[lang]
 
 
 def _output_samplerate(default: int = 44100) -> int:
@@ -52,6 +74,40 @@ def _resample_to(audio_i16: np.ndarray, src_rate: int, dst_rate: int) -> np.ndar
     y = np.fft.irfft(out, m) * (m / n)
     return np.clip(np.round(y), -32768, 32767).astype(np.int16)
 
+
+def _synthesize_local(text: str, lang: str) -> bytes:
+    from piper.config import SynthesisConfig
+    voice = _get_voice(lang)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wav_file:
+        voice.synthesize_wav(text, wav_file, syn_config=SynthesisConfig(length_scale=_SPEED_SCALE))
+    return buf.getvalue()
+
+
+def _synthesize_remote(text: str, lang: str, cfg: dict) -> bytes:
+    headers = {}
+    if cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {cfg['api_key']}"
+    response = requests.post(cfg["url"], json={"text": text, "lang": lang},
+                             headers=headers, timeout=120)
+    response.raise_for_status()
+    return response.content
+
+
+def _play_wav_bytes(wav_bytes: bytes) -> None:
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+        sample_rate = wav_file.getframerate()
+        frames = wav_file.readframes(wav_file.getnframes())
+    audio_data = np.frombuffer(frames, dtype=np.int16)
+
+    play_data = _resample_to(audio_data, sample_rate, _DEVICE_RATE)
+    if _TAIL_SECONDS > 0:
+        tail = np.zeros(int(_DEVICE_RATE * _TAIL_SECONDS), dtype=np.int16)
+        play_data = np.concatenate([play_data, tail])
+
+    sd.play(play_data, samplerate=_DEVICE_RATE, blocking=True)
+
+
 def synthesize(text: str, lang: str, output_file: str | None = None, play: bool = True) -> bytes | None:
     """
     Synthesize text using the given language ("en" or "es").
@@ -62,44 +118,20 @@ def synthesize(text: str, lang: str, output_file: str | None = None, play: bool 
     client-side (so the user can route TTS output to a different device
     than the one used for microphone capture).
     """
-    voice = voices[lang]
+    cfg = backends.get("tts")
+    if cfg["backend"] == "remote":
+        wav_bytes = _synthesize_remote(text, lang, cfg)
+    else:
+        wav_bytes = _synthesize_local(text, lang)
 
-    syn_config = SynthesisConfig(length_scale=_SPEED_SCALE)
-
-    # Generate audio file
     if output_file:
-        with wave.open(output_file, "wb") as wav_file:
-            voice.synthesize_wav(text, wav_file, syn_config=syn_config)
+        Path(output_file).write_bytes(wav_bytes)
         print(f"Saved to {output_file}")
 
     if not play:
-        if output_file:
-            return Path(output_file).read_bytes()
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wav_file:
-            voice.synthesize_wav(text, wav_file, syn_config=syn_config)
-        return buf.getvalue()
+        return wav_bytes
 
-    # Play audio locally (CLI path)
-    playback_file = output_file if output_file else os.path.join(
-        tempfile.gettempdir(), "piper_playback.wav"
-    )
-
-    if not output_file:
-        with wave.open(playback_file, "wb") as wav_file:
-            voice.synthesize_wav(text, wav_file, syn_config=syn_config)
-
-    with wave.open(playback_file, "rb") as wav_file:
-        sample_rate = wav_file.getframerate()
-        frames = wav_file.readframes(wav_file.getnframes())
-        audio_data = np.frombuffer(frames, dtype=np.int16)
-
-    play_data = _resample_to(audio_data, sample_rate, _DEVICE_RATE)
-    if _TAIL_SECONDS > 0:
-        tail = np.zeros(int(_DEVICE_RATE * _TAIL_SECONDS), dtype=np.int16)
-        play_data = np.concatenate([play_data, tail])
-
-    sd.play(play_data, samplerate=_DEVICE_RATE, blocking=True)
+    _play_wav_bytes(wav_bytes)
     return None
 
 
@@ -111,5 +143,3 @@ if __name__ == "__main__":
     ]
     for i, (text, lang) in enumerate(segments):
         synthesize(text, lang, output_file=f"output_{i}_{lang}.wav", play=True)
-
-

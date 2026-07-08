@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(_ROOT, "whisper"))
 sys.path.insert(0, os.path.join(_ROOT, "piper"))
 sys.path.insert(0, os.path.join(_ROOT, "audio_recorder"))
 
-import whisper
+import backends
 from record import record_once
 from tts import synthesize
 
@@ -61,9 +61,15 @@ def main():
               "starting a plain conversation instead.")
     daily = daily_story_from_setup_state(setup_state)
 
-    print("Loading Whisper model...")
-    whisper_model = whisper.load_model("large-v3")
-    print("Whisper ready.\n")
+    stt = backends.get("stt")
+    if stt["backend"] == "local":
+        print("Loading Whisper model...")
+        import whisper  # deferred: pulls in torch, pointless for remote STT
+        whisper_model = whisper.load_model(stt["whisper_model"])
+        print("Whisper ready.\n")
+    else:
+        whisper_model = None
+        print(f"Using remote speech-to-text at {stt['url']}\n")
 
     if daily:
         print(f"\nCuento de hoy: {daily['story_title']}\n\n{daily['story']}\n")

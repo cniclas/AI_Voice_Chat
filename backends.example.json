@@ -1,0 +1,21 @@
+{
+  "//": "Copy to backends.json (gitignored — it may hold API keys) and edit.",
+  "//llm": "backend 'ollama' (default: local Ollama) or 'openai' — any OpenAI-compatible endpoint. HF serverless router: base_url https://router.huggingface.co/v1 with an hf_ token. Dedicated HF Inference Endpoint (TGI): base_url https://<name>.endpoints.huggingface.cloud/v1. Remote Ollama: keep backend 'ollama' and change base_url.",
+  "llm": {
+    "backend": "openai",
+    "base_url": "https://router.huggingface.co/v1",
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "api_key": "hf_..."
+  },
+  "//stt": "backend 'local' (bundled Whisper; recommended — hosted Whisper endpoints usually auto-detect language and ignore the en/es button) or 'remote' (POST WAV -> {\"text\": ...}, e.g. an HF automatic-speech-recognition endpoint).",
+  "stt": {
+    "backend": "local",
+    "whisper_model": "large-v3"
+  },
+  "//tts": "backend 'local' (bundled Piper voices) or 'remote' (see remote/piper_server.py).",
+  "tts": {
+    "backend": "remote",
+    "url": "http://my-gpu-box:8080/tts",
+    "api_key": "shared-secret"
+  }
+}

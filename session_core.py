@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import requests
 
+import backends
 from curriculum import chat_completion
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -85,9 +87,33 @@ def load_audio_16k(path: str) -> np.ndarray:
 
 
 def transcribe_audio(audio_path: str, model, language: str = "en") -> str:
+    """Transcribe a WAV via the configured STT backend. `model` is the loaded
+    local Whisper model, or None when the remote backend is configured."""
+    cfg = backends.get("stt")
+    if cfg["backend"] == "remote":
+        return _transcribe_remote(audio_path, language, cfg)
     audio = load_audio_16k(audio_path)
     result = model.transcribe(audio, language=language)
     return result["text"].strip()
+
+
+def _transcribe_remote(audio_path: str, language: str, cfg: dict) -> str:
+    """POST the WAV to an ASR endpoint that returns {"text": ...} — the shape
+    used by HuggingFace automatic-speech-recognition endpoints.
+
+    Note: most hosted Whisper endpoints auto-detect the language and ignore
+    the en/es choice made at record time; the local backend honors it. The
+    language is passed as a query parameter for custom servers that do.
+    """
+    headers = {"Content-Type": "audio/wav"}
+    if cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {cfg['api_key']}"
+    with open(audio_path, "rb") as f:
+        data = f.read()
+    response = requests.post(cfg["url"], data=data, headers=headers,
+                             params={"language": language}, timeout=120)
+    response.raise_for_status()
+    return (response.json().get("text") or "").strip()
 
 
 def create_session_dir() -> Path:

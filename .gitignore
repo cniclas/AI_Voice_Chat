@@ -6,3 +6,6 @@ recordings/
 __pycache__/
 *.pyc
 whisper/
+
+# Backend config may contain API keys
+backends.json
