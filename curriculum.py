@@ -8,10 +8,10 @@ from pathlib import Path
 
 import requests
 
+import backends
+
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 
-OLLAMA_MODEL = "llama3.1:8b"
-OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_NUM_CTX = 8192  # default 2048 would overflow once article+story context is added
 
 WIKI_ONTHISDAY_URL = "https://en.wikipedia.org/api/rest_v1/feed/onthisday/events/{month:02d}/{day:02d}"
@@ -37,23 +37,62 @@ MIN_PRE1950_POOL = 3  # below this, fall back to the full day's pool rather than
 # ---------------------------------------------------------------------------
 
 def chat_completion(messages: list, format: dict | str | None = None, timeout: int = 120) -> str:
-    """Low-level Ollama chat call. Returns the assistant's text.
+    """Low-level chat call against the configured LLM backend (backends.json:
+    local/remote Ollama, or any OpenAI-compatible endpoint such as a
+    HuggingFace Inference Endpoint). Returns the assistant's text.
 
-    `format` optionally constrains Ollama's output ("json" or a JSON-schema
+    `format` optionally constrains the output ("json" or a JSON-schema
     dict) — this only guarantees syntactically valid JSON, callers still
     validate the shape themselves.
     """
+    cfg = backends.get("llm")
+    if cfg["backend"] == "openai":
+        return _openai_chat_completion(cfg, messages, format, timeout)
+    return _ollama_chat_completion(cfg, messages, format, timeout)
+
+
+def _ollama_chat_completion(cfg: dict, messages: list, format, timeout: int) -> str:
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": cfg["model"],
         "messages": messages,
         "stream": False,
         "options": {"num_ctx": OLLAMA_NUM_CTX},
     }
     if format is not None:
         payload["format"] = format
-    response = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
+    url = cfg["base_url"].rstrip("/") + "/api/chat"
+    response = requests.post(url, json=payload, timeout=timeout)
     response.raise_for_status()
     return response.json()["message"]["content"]
+
+
+def _openai_chat_completion(cfg: dict, messages: list, format, timeout: int) -> str:
+    """OpenAI-compatible /v1/chat/completions (TGI, vLLM, HF router, ...).
+
+    Schema constraints are mapped to `response_format: json_schema`; servers
+    that don't support constrained decoding get one retry without it — the
+    prompts already ask for JSON and chat_completion_json validates/retries.
+    """
+    url = cfg["base_url"].rstrip("/") + "/chat/completions"
+    headers = {}
+    if cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {cfg['api_key']}"
+
+    payload = {"model": cfg["model"], "messages": messages, "stream": False}
+    if isinstance(format, dict):
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "response", "schema": format},
+        }
+    elif format == "json":
+        payload["response_format"] = {"type": "json_object"}
+
+    response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    if response.status_code in (400, 404, 415, 422) and "response_format" in payload:
+        del payload["response_format"]
+        response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
 
 
 def chat_completion_json(messages: list, schema: dict) -> dict:

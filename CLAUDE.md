@@ -42,6 +42,14 @@ pipwin install pyaudio
 
 ## Architecture
 
+### Model backends (local vs remote)
+
+The three model services are pluggable via `backends.py`, configured by an optional `backends.json` at the repo root (gitignored — it may hold API keys; see `backends.example.json`). No file → all-local defaults, identical to the original behavior. Any mix is allowed (e.g. Whisper local, LLM + Piper remote):
+
+- **LLM** (`curriculum.chat_completion()`): `"ollama"` (local or remote Ollama via `base_url`) or `"openai"` — any OpenAI-compatible `/v1/chat/completions` endpoint (HuggingFace serverless router `https://router.huggingface.co/v1`, dedicated HF Inference Endpoints/TGI, vLLM, ...). JSON-schema constraints map to `response_format: json_schema`; servers that reject constrained decoding get one retry without it (the prompts already ask for JSON and `chat_completion_json` validates).
+- **STT** (`session_core.transcribe_audio()`): `"local"` (the bundled Whisper package; only then is the model loaded at startup) or `"remote"` (POST WAV body → `{"text": ...}`, the HF automatic-speech-recognition shape). Caveat: hosted Whisper endpoints usually auto-detect language and ignore the per-turn en/es choice — a reason to keep STT local.
+- **TTS** (`piper/tts.py:synthesize()`): `"local"` (bundled Piper voices, now loaded lazily on first use) or `"remote"` (POST `{"text", "lang"}` → WAV bytes). `remote/piper_server.py` is a self-contained FastAPI server implementing that contract for the remote host (Piper is CPU-fast; no GPU needed), with optional bearer-token auth via `PIPER_SERVER_TOKEN`.
+
 ### Conversation modes (browser UI)
 
 The browser UI offers four mutually exclusive modes, picked on the start screen. One WebSocket connection = one session in one mode; the first client message (`{"type": "start", "mode": ...}`) selects which `web/session.py` orchestrator class runs (`MODE_SESSIONS` dispatch in `web/server.py`):
@@ -70,7 +78,7 @@ A story session follows a five-phase arc, shared by both the browser UI (`web/se
 ## Key constraints
 
 - Only two languages are supported: `"en"` and `"es"`. The language selection happens at record time and flows through the entire pipeline; the tutor mirrors it per turn (fixed from an earlier bug where it always replied in Spanish).
-- Piper voices must be present in `piper/voices/` before `tts.py` can be imported — it loads them at module level.
+- With the local TTS backend, Piper voices must be present in `piper/voices/` before the first `synthesize()` call — they are loaded lazily per language and cached. With the remote backend no local voices are needed.
 - `audio_recorder/` has its own `venv` and `requirements.txt` that is separate from the root venv; the root `requirements.txt` uses `pyaudio` instead. It's only used by the terminal UI — the browser UI captures audio client-side.
 - `recordings/student_profile.json` is the one piece of cross-session state; it's gitignored (personal learning data) along with the rest of `recordings/`.
 - The browser UI's output-device picker relies on `HTMLMediaElement.setSinkId()`, which is Chromium-only as of writing (Chrome/Edge); other browsers fall back to the system default output device.

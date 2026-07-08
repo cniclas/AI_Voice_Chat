@@ -29,12 +29,12 @@ sys.path.insert(0, os.path.join(_ROOT, "piper"))
 
 import webbrowser
 
-import whisper
 from fastapi import FastAPI, WebSocket, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from starlette.websockets import WebSocketDisconnect
 
+import backends
 from web.session import MODE_SESSIONS
 from session_core import RECORDINGS_ROOT
 
@@ -43,10 +43,16 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Loading Whisper model...")
-    app.state.whisper_model = whisper.load_model("large-v3")
+    stt = backends.get("stt")
+    if stt["backend"] == "local":
+        print("Loading Whisper model...")
+        import whisper  # deferred: pulls in torch, pointless for remote STT
+        app.state.whisper_model = whisper.load_model(stt["whisper_model"])
+        print("Whisper ready.")
+    else:
+        app.state.whisper_model = None
+        print(f"Using remote speech-to-text at {stt['url']}")
     app.state.whisper_lock = asyncio.Lock()
-    print("Whisper ready.")
     # Set by run.py so `python run.py` opens the UI once the server is usable.
     if os.environ.get("AI_TUTOR_OPEN_BROWSER") == "1":
         webbrowser.open(os.environ.get("AI_TUTOR_URL", "http://127.0.0.1:8000"))
