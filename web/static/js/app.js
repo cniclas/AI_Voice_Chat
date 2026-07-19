@@ -2,19 +2,29 @@
   const phaseBadge = document.getElementById('phase-badge');
   const avatar = document.getElementById('avatar');
   const statusText = document.getElementById('status-text');
+  const landingPanel = document.getElementById('landing-panel');
   const storyPanel = document.getElementById('story-panel');
   const storyTitle = document.getElementById('story-title');
   const storyText = document.getElementById('story-text');
+  const chatPanel = document.getElementById('chat-panel');
   const chatLog = document.getElementById('chat-log');
   const controls = document.getElementById('controls');
   const inputSelect = document.getElementById('input-device');
   const outputSelect = document.getElementById('output-device');
+  const btnTalk = document.getElementById('btn-talk');
+  const btnStory = document.getElementById('btn-story');
   const btnEn = document.getElementById('btn-en');
   const btnEs = document.getElementById('btn-es');
   const btnStop = document.getElementById('btn-stop');
-  const btnQuit = document.getElementById('btn-quit');
+  const btnExit = document.getElementById('btn-exit');
   const completePanel = document.getElementById('complete-panel');
   const completeLinks = document.getElementById('complete-links');
+
+  // Map backend avatar states to the CSS classes we actually have.
+  const AVATAR_CLASS = {
+    idle: 'idle', listening: 'listening', thinking: 'thinking',
+    speaking: 'speaking', loading: 'thinking',
+  };
 
   let ws = null;
   let recording = false;
@@ -22,7 +32,7 @@
   let pendingBinaryTurn = null;
 
   function setAvatarState(state) {
-    avatar.className = `avatar avatar--${state}`;
+    avatar.className = `avatar avatar--${AVATAR_CLASS[state] || 'idle'}`;
   }
 
   function appendMessage(author, language, text) {
@@ -78,9 +88,9 @@
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
-      phaseBadge.textContent = 'preparing';
-      statusText.textContent = "Fetching today's story…";
-      setAvatarState('thinking');
+      phaseBadge.textContent = 'starting up';
+      statusText.textContent = 'Loading Whisper and Piper…';
+      setAvatarState('loading');
     };
 
     ws.onmessage = async (event) => {
@@ -99,26 +109,39 @@
   async function handleAudioFrame(arrayBuffer) {
     const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
     setAvatarState('speaking');
-    statusText.textContent = 'Speaking…';
+    statusText.textContent = 'Playing back to you…';
     await AudioPlayback.playBlob(blob);
     setAvatarState('idle');
     if (pendingBinaryTurn === 'story') {
       ws.send(JSON.stringify({ type: 'tts_playback_done' }));
     } else {
-      statusText.textContent = 'Your turn — press Record.';
+      statusText.textContent = 'Your turn — press a language button and speak.';
     }
     pendingBinaryTurn = null;
   }
 
+  function enterConversation(mode) {
+    landingPanel.hidden = true;
+    chatPanel.hidden = false;
+    controls.hidden = false;
+    phaseBadge.textContent = mode === 'story' ? 'story' : 'talking';
+  }
+
   function handleControlMessage(msg) {
     switch (msg.type) {
-      case 'phase':
-        phaseBadge.textContent = `${msg.phase} — ${msg.status}`;
-        if (msg.phase === 'converse' && msg.status === 'running') {
-          controls.hidden = false;
-          statusText.textContent = 'Your turn — press Record.';
-          setAvatarState('idle');
-        }
+      case 'ready':
+        phaseBadge.textContent = 'ready';
+        setAvatarState('idle');
+        landingPanel.hidden = false;
+        statusText.textContent = 'Ready. Pick how you want to start.';
+        populateDevices();
+        break;
+      case 'mode':
+        enterConversation(msg.mode);
+        break;
+      case 'status':
+        if (msg.state) setAvatarState(msg.state);
+        if (msg.message) statusText.textContent = msg.message;
         break;
       case 'story':
         if (msg.story) {
@@ -148,6 +171,7 @@
   }
 
   function finishSession(msg) {
+    landingPanel.hidden = true;
     controls.hidden = true;
     completePanel.hidden = false;
     setAvatarState('idle');
@@ -180,7 +204,7 @@
     btnEs.disabled = true;
     btnStop.disabled = false;
     setAvatarState('listening');
-    statusText.textContent = `Recording (${language})… press Stop when done.`;
+    statusText.textContent = `Listening (${language})… press Stop when you're done.`;
     try {
       await AudioCapture.start();
     } catch (e) {
@@ -208,13 +232,15 @@
     ws.send(buffer);
   }
 
+  btnTalk.addEventListener('click', () => ws.send(JSON.stringify({ type: 'start_talk' })));
+  btnStory.addEventListener('click', () => ws.send(JSON.stringify({ type: 'start_story' })));
   btnEn.addEventListener('click', () => startRecording('en'));
   btnEs.addEventListener('click', () => startRecording('es'));
   btnStop.addEventListener('click', stopRecording);
-  btnQuit.addEventListener('click', () => {
+  btnExit.addEventListener('click', () => {
     ws.send(JSON.stringify({ type: 'end_session' }));
-    btnQuit.disabled = true;
+    btnExit.disabled = true;
   });
 
-  populateDevices().then(connect);
+  connect();
 })();

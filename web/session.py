@@ -1,7 +1,18 @@
 """SessionOrchestrator: drives one tutoring session over a single WebSocket
-connection, mirroring main.py's five-phase arc (prepare/narrate/converse/
-analyze/homework) but event-driven instead of blocking on terminal keypresses
-and local audio playback.
+connection.
+
+Unlike the terminal UI (`main.py`), which runs the five-phase arc top to
+bottom, the browser session is *command-driven*. On connect the orchestrator
+only signals readiness; nothing happens until the user picks an entry point:
+
+- ``start_talk``  — a plain push-to-talk conversation, no story preamble.
+- ``start_story`` — fetch today's Wikipedia "on this day" story, narrate it,
+  then converse about it.
+
+Both land in the same per-turn conversation handling, and both end with the
+analyze/homework phase when the user exits. Status updates are streamed to the
+client throughout so the user always sees what the backend is doing
+(transcribing, generating, synthesizing, …).
 """
 
 import asyncio
@@ -11,6 +22,7 @@ from pathlib import Path
 import requests
 from fastapi import WebSocket, WebSocketDisconnect
 
+import curriculum
 from tts import synthesize
 from session_graphs import session_setup_graph, session_analysis_graph
 from session_core import (
@@ -24,6 +36,8 @@ from session_core import (
     build_system_prompt,
     daily_story_from_setup_state,
 )
+
+_PROMPT_TO_SPEAK = "Your turn — press a language button and speak."
 
 
 class _SessionEnded(Exception):
@@ -40,18 +54,43 @@ class SessionOrchestrator:
         self.llm_history: list = []
         self.responses: list[Response] = []
         self.setup_state: dict = {}
+        self.mode: str | None = None  # "talk" or "story" once a conversation starts
 
     async def _send(self, type_: str, **payload):
         await self.ws.send_json({"type": type_, **payload})
 
+    async def _status(self, state: str, message: str):
+        """Push a combined avatar-state + human-readable status line."""
+        await self._send("status", state=state, message=message)
+
     async def run(self):
         try:
-            await self._prepare_and_narrate()
-            await self._converse_loop()
+            # Whisper and Piper are loaded eagerly at server startup (see
+            # web/server.py lifespan + tts.py module import), so by the time a
+            # client connects the backend is ready. Surface that explicitly so
+            # the user knows the heavy models are already in memory.
+            await self._status("loading", "Loading Whisper and Piper…")
+            await self._send("ready")
+            await self._command_loop()
         except (WebSocketDisconnect, _SessionEnded):
             pass
         finally:
             await self._analyze_and_persist()
+
+    async def _command_loop(self):
+        """Dispatch client commands until the session ends."""
+        while True:
+            message = await self.ws.receive_json()
+            msg_type = message.get("type")
+            if msg_type == "end_session":
+                break
+            elif msg_type == "start_talk":
+                await self._start_talk()
+            elif msg_type == "start_story":
+                await self._start_story()
+            elif msg_type == "user_audio":
+                await self._handle_turn(message)
+            # Unknown message types are ignored (forward-compatible).
 
     async def _wait_for(self, expected_type: str):
         """Block until a specific client message arrives, treating an
@@ -64,10 +103,34 @@ class SessionOrchestrator:
             if msg_type == "end_session":
                 raise _SessionEnded()
 
-    async def _prepare_and_narrate(self):
-        self.session_dir = create_session_dir()
-        await self._send("phase", phase="prepare", status="running")
+    def _ensure_session_dir(self):
+        if self.session_dir is None:
+            self.session_dir = create_session_dir()
 
+    # -- Entry points --------------------------------------------------------
+
+    async def _start_talk(self):
+        """Free conversation: no story, base tutoring prompt."""
+        if self.mode is not None:
+            return
+        self.mode = "talk"
+        self._ensure_session_dir()
+        if self.profile is None:
+            self.profile = await asyncio.to_thread(curriculum.load_profile)
+        self.llm_history = [{"role": "system", "content": build_system_prompt(None)}]
+        await self._send("mode", mode="talk")
+        await self._status("idle", _PROMPT_TO_SPEAK)
+
+    async def _start_story(self):
+        """Fetch today's Wikipedia story, narrate it, then converse about it."""
+        if self.mode is not None:
+            return
+        self.mode = "story"
+        self._ensure_session_dir()
+        await self._send("mode", mode="story")
+
+        await self._status("thinking",
+                           "Fetching today's Wikipedia story and writing your lesson… (this can take a moment)")
         self.setup_state = await asyncio.to_thread(
             session_setup_graph.invoke, {"session_dir": str(self.session_dir)})
         self.profile = self.setup_state["profile"]
@@ -82,10 +145,9 @@ class SessionOrchestrator:
             story_title=daily["story_title"] if daily else None,
             story=daily["story"] if daily else None,
         )
-        await self._send("phase", phase="prepare", status="done")
 
         if daily:
-            await self._send("phase", phase="narrate", status="running")
+            await self._status("speaking", "Reading today's story aloud…")
             audio_bytes = await asyncio.to_thread(
                 synthesize,
                 f"{daily['story_title']}. {daily['story']}",
@@ -96,69 +158,78 @@ class SessionOrchestrator:
             await self._send("tts_audio", turn="story")
             await self.ws.send_bytes(audio_bytes)
             await self._wait_for("tts_playback_done")
-            await self._send("phase", phase="narrate", status="done")
 
         self.llm_history = [{"role": "system", "content": build_system_prompt(daily)}]
-        await self._send("phase", phase="converse", status="running")
+        await self._status("idle", _PROMPT_TO_SPEAK)
 
-    async def _converse_loop(self):
-        while True:
-            header = await self.ws.receive_json()
-            msg_type = header.get("type")
-            if msg_type == "end_session":
-                break
-            if msg_type != "user_audio":
-                continue
+    # -- Per-turn conversation ----------------------------------------------
 
-            language = header["language"]
-            audio_bytes = await self.ws.receive_bytes()
-            audio_path = generate_audio_filename(self.session_dir, "user", language)
-            Path(audio_path).write_bytes(audio_bytes)
-
-            async with self.whisper_lock:
-                user_text = await asyncio.to_thread(
-                    transcribe_audio, audio_path, self.whisper_model, language)
-            if not user_text:
-                await self._send("no_speech")
-                continue
-
-            self.responses.append(Response(
-                author="user", language=language, text=user_text,
-                timestamp=datetime.now(), audio_sample=audio_path,
-            ))
-            await self._send("transcript", author="user", language=language, text=user_text)
-
-            try:
-                response_text = await asyncio.to_thread(
-                    query_llm, user_text, language, self.llm_history)
-            except requests.RequestException as e:
-                await self._send("error", message=f"Ollama error: {e}. Make sure Ollama is running (ollama serve).")
-                continue
-
-            assistant_audio_path = generate_audio_filename(self.session_dir, "assistant", language)
-            self.responses.append(Response(
-                author="assistant", language=language, text=response_text,
-                timestamp=datetime.now(), audio_sample=assistant_audio_path,
-            ))
-            await self._send("transcript", author="assistant", language=language, text=response_text)
-
-            audio_bytes = await asyncio.to_thread(
-                synthesize, response_text, lang=language,
-                output_file=assistant_audio_path, play=False,
-            )
-            await self._send("tts_audio", turn="reply")
-            await self.ws.send_bytes(audio_bytes)
-
-    async def _analyze_and_persist(self):
-        if not self.responses:
-            await self._send("done", transcript_path=None, homework_path=None)
-            try:
-                self.session_dir.rmdir()  # Remove the empty session folder
-            except OSError:
-                pass
+    async def _handle_turn(self, header: dict):
+        # A user_audio header is always followed by one binary frame; consume
+        # it even if we're not in a conversation yet, to stay in sync.
+        language = header.get("language", "en")
+        audio_bytes = await self.ws.receive_bytes()
+        if self.mode is None:
             return
 
-        await self._send("phase", phase="analyze", status="running")
+        audio_path = generate_audio_filename(self.session_dir, "user", language)
+        Path(audio_path).write_bytes(audio_bytes)
+
+        await self._status("thinking", "Transcribing what you said…")
+        async with self.whisper_lock:
+            user_text = await asyncio.to_thread(
+                transcribe_audio, audio_path, self.whisper_model, language)
+        if not user_text:
+            await self._send("no_speech")
+            await self._status("idle", "No speech detected — try again.")
+            return
+
+        self.responses.append(Response(
+            author="user", language=language, text=user_text,
+            timestamp=datetime.now(), audio_sample=audio_path,
+        ))
+        await self._send("transcript", author="user", language=language, text=user_text)
+
+        await self._status("thinking", "Generating a response…")
+        try:
+            response_text = await asyncio.to_thread(
+                query_llm, user_text, language, self.llm_history)
+        except requests.RequestException as e:
+            await self._send("error", message=f"Ollama error: {e}. Make sure Ollama is running (ollama serve).")
+            await self._status("idle", _PROMPT_TO_SPEAK)
+            return
+
+        assistant_audio_path = generate_audio_filename(self.session_dir, "assistant", language)
+        self.responses.append(Response(
+            author="assistant", language=language, text=response_text,
+            timestamp=datetime.now(), audio_sample=assistant_audio_path,
+        ))
+        await self._send("transcript", author="assistant", language=language, text=response_text)
+
+        await self._status("thinking", "Synthesizing speech…")
+        audio_bytes = await asyncio.to_thread(
+            synthesize, response_text, lang=language,
+            output_file=assistant_audio_path, play=False,
+        )
+        await self._send("tts_audio", turn="reply")
+        await self.ws.send_bytes(audio_bytes)
+
+    # -- Wrap-up -------------------------------------------------------------
+
+    async def _analyze_and_persist(self):
+        if self.session_dir is None or not self.responses:
+            try:
+                await self._send("done", transcript_path=None, homework_path=None)
+            except (WebSocketDisconnect, RuntimeError):
+                pass
+            if self.session_dir is not None:
+                try:
+                    self.session_dir.rmdir()  # Remove the session folder if still empty
+                except OSError:
+                    pass
+            return
+
+        await self._status("thinking", "Analyzing your session and writing homework…")
         transcript_path = save_transcript(self.responses, self.session_dir)
         transcript_text = format_transcript_for_lesson(self.responses)
 
@@ -168,7 +239,9 @@ class SessionOrchestrator:
             "transcript_text": transcript_text,
             "story": self.setup_state.get("story"),
         })
-        await self._send("phase", phase="analyze", status="done")
 
         homework_path = str(self.session_dir / "homework.md") if result.get("homework") else None
-        await self._send("done", transcript_path=str(transcript_path), homework_path=homework_path)
+        try:
+            await self._send("done", transcript_path=str(transcript_path), homework_path=homework_path)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
