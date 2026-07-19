@@ -5,7 +5,7 @@
 .DESCRIPTION
     Downloads and installs everything the app needs to run:
       1. Python dependencies via `uv sync` (includes the CUDA build of PyTorch).
-      2. Piper voice models (English + Spanish) into piper/voices.
+      2. Kokoro TTS model weights (English + Spanish), cached from Hugging Face.
       3. The Ollama LLM used by the tutor (llama3.1:8b).
 
     The script is idempotent: it skips steps whose output already exists, so it
@@ -96,25 +96,22 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Piper voice models
+# 3. Kokoro TTS model weights
 # ---------------------------------------------------------------------------
-Write-Step "Downloading Piper voice models"
-$voicesDir = Join-Path $RepoRoot "piper\voices"
-$requiredVoices = @(
-    "en_US-lessac-medium.onnx",
-    "en_US-lessac-medium.onnx.json",
-    "es_MX-claude-high.onnx",
-    "es_MX-claude-high.onnx.json"
-)
-$haveAllVoices = $true
-foreach ($v in $requiredVoices) {
-    if (-not (Test-Path (Join-Path $voicesDir $v))) { $haveAllVoices = $false; break }
-}
-if ($haveAllVoices) {
-    Write-Skip "Voice models already present in piper\voices"
-} else {
-    & (Join-Path $RepoRoot "piper\download_voices.ps1")
-    Write-Ok "Voice models downloaded"
+Write-Step "Caching Kokoro TTS model weights"
+# Kokoro pulls its weights (and per-language phonemizer data) from Hugging
+# Face on first use, caching them under the user's HF cache dir. Warm the
+# cache here so the first real session doesn't stall on a download.
+Push-Location $RepoRoot
+try {
+    uv run python -c "from kokoro import KPipeline; KPipeline(lang_code='a'); KPipeline(lang_code='e')" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn2 "Could not pre-cache Kokoro model weights; it will download on first run instead."
+    } else {
+        Write-Ok "Kokoro model weights cached"
+    }
+} finally {
+    Pop-Location
 }
 
 # ---------------------------------------------------------------------------

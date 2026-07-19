@@ -89,7 +89,7 @@
 
     ws.onopen = () => {
       phaseBadge.textContent = 'starting up';
-      statusText.textContent = 'Loading Whisper and Piper…';
+      statusText.textContent = 'Loading Whisper and Kokoro…';
       setAvatarState('loading');
     };
 

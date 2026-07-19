@@ -65,11 +65,11 @@ class SessionOrchestrator:
 
     async def run(self):
         try:
-            # Whisper and Piper are loaded eagerly at server startup (see
+            # Whisper and Kokoro are loaded eagerly at server startup (see
             # web/server.py lifespan + tts.py module import), so by the time a
             # client connects the backend is ready. Surface that explicitly so
             # the user knows the heavy models are already in memory.
-            await self._status("loading", "Loading Whisper and Piper…")
+            await self._status("loading", "Loading Whisper and Kokoro…")
             await self._send("ready")
             await self._command_loop()
         except (WebSocketDisconnect, _SessionEnded):

@@ -8,7 +8,7 @@ sounddevice
 -e ./whisper
 
 # Text-to-speech
-piper-tts
+kokoro
 
 # HTTP client for Ollama
 requests

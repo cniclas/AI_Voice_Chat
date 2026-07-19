@@ -23,7 +23,7 @@ for _p in glob.glob(os.path.join(_ROOT, ".venv", "Lib", "site-packages")):
 import requests
 
 sys.path.insert(0, os.path.join(_ROOT, "whisper"))
-sys.path.insert(0, os.path.join(_ROOT, "piper"))
+sys.path.insert(0, os.path.join(_ROOT, "kokoro"))
 sys.path.insert(0, os.path.join(_ROOT, "audio_recorder"))
 
 import whisper
