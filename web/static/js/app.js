@@ -30,6 +30,12 @@
   let recording = false;
   let currentLanguage = null;
   let pendingBinaryTurn = null;
+  let sessionFinished = false;
+  let reconnectDelay = 1000;
+
+  function wsOpen() {
+    return ws && ws.readyState === WebSocket.OPEN;
+  }
 
   function setAvatarState(state) {
     avatar.className = `avatar avatar--${AVATAR_CLASS[state] || 'idle'}`;
@@ -88,6 +94,7 @@
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
+      reconnectDelay = 1000;
       phaseBadge.textContent = 'starting up';
       statusText.textContent = 'Loading Whisper and Piper…';
       setAvatarState('loading');
@@ -102,8 +109,34 @@
     };
 
     ws.onclose = () => {
-      statusText.textContent = 'Disconnected.';
+      // After a completed session the server closes the socket on purpose —
+      // leave the completion screen alone. Any other close (server down,
+      // uvicorn --reload restart, network hiccup) gets automatic retries,
+      // so a page opened while the backend is still loading Whisper simply
+      // connects once it's up instead of dead-ending at "Disconnected".
+      if (sessionFinished) return;
+      phaseBadge.textContent = 'reconnecting';
+      setAvatarState('idle');
+      statusText.textContent = 'Connection lost — reconnecting…';
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 10000);
     };
+  }
+
+  function resetToLanding() {
+    // A reconnect gets a brand-new server-side session; drop any stale
+    // mid-session UI from the previous connection.
+    storyPanel.hidden = true;
+    chatPanel.hidden = true;
+    controls.hidden = true;
+    completePanel.hidden = true;
+    chatLog.innerHTML = '';
+    recording = false;
+    pendingBinaryTurn = null;
+    btnEn.disabled = false;
+    btnEs.disabled = false;
+    btnStop.disabled = true;
+    btnExit.disabled = false;
   }
 
   async function handleAudioFrame(arrayBuffer) {
@@ -113,7 +146,7 @@
     await AudioPlayback.playBlob(blob);
     setAvatarState('idle');
     if (pendingBinaryTurn === 'story') {
-      ws.send(JSON.stringify({ type: 'tts_playback_done' }));
+      if (wsOpen()) ws.send(JSON.stringify({ type: 'tts_playback_done' }));
     } else {
       statusText.textContent = 'Your turn — press a language button and speak.';
     }
@@ -130,6 +163,7 @@
   function handleControlMessage(msg) {
     switch (msg.type) {
       case 'ready':
+        resetToLanding();
         phaseBadge.textContent = 'ready';
         setAvatarState('idle');
         landingPanel.hidden = false;
@@ -171,6 +205,7 @@
   }
 
   function finishSession(msg) {
+    sessionFinished = true;
     landingPanel.hidden = true;
     controls.hidden = true;
     completePanel.hidden = false;
@@ -228,16 +263,18 @@
 
     const wavBlob = AudioCapture.stop();
     const buffer = await wavBlob.arrayBuffer();
+    if (!wsOpen()) return;
     ws.send(JSON.stringify({ type: 'user_audio', language: currentLanguage }));
     ws.send(buffer);
   }
 
-  btnTalk.addEventListener('click', () => ws.send(JSON.stringify({ type: 'start_talk' })));
-  btnStory.addEventListener('click', () => ws.send(JSON.stringify({ type: 'start_story' })));
+  btnTalk.addEventListener('click', () => wsOpen() && ws.send(JSON.stringify({ type: 'start_talk' })));
+  btnStory.addEventListener('click', () => wsOpen() && ws.send(JSON.stringify({ type: 'start_story' })));
   btnEn.addEventListener('click', () => startRecording('en'));
   btnEs.addEventListener('click', () => startRecording('es'));
   btnStop.addEventListener('click', stopRecording);
   btnExit.addEventListener('click', () => {
+    if (!wsOpen()) return;
     ws.send(JSON.stringify({ type: 'end_session' }));
     btnExit.disabled = true;
   });
