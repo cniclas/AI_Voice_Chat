@@ -25,16 +25,7 @@
       <p id="status-text">Connecting to server…</p>
     </section>
 
-    <section id="story-panel" hidden>
-      <h2 id="story-title"></h2>
-      <p id="story-text"></p>
-    </section>
-
-    <section id="chat-panel">
-      <div id="chat-log"></div>
-    </section>
-
-    <section id="controls" hidden>
+    <section id="landing-panel" hidden>
       <div class="device-pickers">
         <label>Microphone
           <select id="input-device"></select>
@@ -43,11 +34,32 @@
           <select id="output-device"></select>
         </label>
       </div>
+      <p class="landing-hint">Choose how you'd like to start:</p>
+      <div class="landing-actions">
+        <button id="btn-talk" class="entry-btn">🗣 Talk now
+          <span class="entry-sub">Free conversation — just start speaking</span>
+        </button>
+        <button id="btn-story" class="entry-btn">📖 Today's Wikipedia story
+          <span class="entry-sub">Hear a short Spanish story, then chat about it</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="story-panel" hidden>
+      <h2 id="story-title"></h2>
+      <p id="story-text"></p>
+    </section>
+
+    <section id="chat-panel" hidden>
+      <div id="chat-log"></div>
+    </section>
+
+    <section id="controls" hidden>
       <div class="record-controls">
         <button id="btn-en" class="lang-btn">🎙 English</button>
         <button id="btn-es" class="lang-btn">🎙 Español</button>
         <button id="btn-stop" class="stop-btn" disabled>Stop</button>
-        <button id="btn-quit" class="quit-btn">Finish session</button>
+        <button id="btn-exit" class="exit-btn">Exit</button>
       </div>
     </section>
 
