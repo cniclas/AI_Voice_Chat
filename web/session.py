@@ -45,9 +45,10 @@ class _SessionEnded(Exception):
 
 
 class SessionOrchestrator:
-    def __init__(self, ws: WebSocket, whisper_model, whisper_lock: asyncio.Lock):
+    def __init__(self, ws: WebSocket, app_state, whisper_lock: asyncio.Lock):
         self.ws = ws
-        self.whisper_model = whisper_model
+        self.app_state = app_state
+        self.whisper_model = None
         self.whisper_lock = whisper_lock
         self.session_dir: Path | None = None
         self.profile: dict | None = None
@@ -55,6 +56,7 @@ class SessionOrchestrator:
         self.responses: list[Response] = []
         self.setup_state: dict = {}
         self.mode: str | None = None  # "talk" or "story" once a conversation starts
+        self.awaiting_mode = True
 
     async def _send(self, type_: str, **payload):
         await self.ws.send_json({"type": type_, **payload})
@@ -65,15 +67,24 @@ class SessionOrchestrator:
 
     async def run(self):
         try:
-            # Whisper and Piper are loaded eagerly at server startup (see
-            # web/server.py lifespan + tts.py module import), so by the time a
-            # client connects the backend is ready. Surface that explicitly so
-            # the user knows the heavy models are already in memory.
             await self._status("loading", "Loading Whisper and Piper…")
+            # Wait for the background model loader. If it fails the event
+            # may never be set; other exceptions are caught below so we can
+            # report them to the client.
+            await self.app_state.whisper_ready.wait()
+            self.whisper_model = self.app_state.whisper_model
             await self._send("ready")
             await self._command_loop()
         except (WebSocketDisconnect, _SessionEnded):
+            # Normal session termination.
             pass
+        except Exception as e:
+            # Unexpected server error — surface to client and continue to
+            # the cleanup phase so we don't leave temporary files behind.
+            try:
+                await self._send("error", message=f"Internal server error: {e}")
+            except Exception:
+                pass
         finally:
             await self._analyze_and_persist()
 
@@ -84,11 +95,18 @@ class SessionOrchestrator:
             msg_type = message.get("type")
             if msg_type == "end_session":
                 break
-            elif msg_type == "start_talk":
-                await self._start_talk()
-            elif msg_type == "start_story":
-                await self._start_story()
+            elif msg_type in {"start_talk", "start_story"}:
+                if not self.awaiting_mode:
+                    continue
+                self.awaiting_mode = False
+                if msg_type == "start_talk":
+                    await self._start_talk()
+                else:
+                    await self._start_story()
             elif msg_type == "user_audio":
+                if self.mode is None:
+                    await self._send("status", state="idle", message="Pick a mode first.")
+                    continue
                 await self._handle_turn(message)
             # Unknown message types are ignored (forward-compatible).
 

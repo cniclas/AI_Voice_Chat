@@ -25,7 +25,7 @@
       <p id="status-text">Connecting to server…</p>
     </section>
 
-    <section id="landing-panel" hidden>
+    <section id="landing-panel">
       <div class="device-pickers">
         <label>Microphone
           <select id="input-device"></select>
@@ -34,12 +34,16 @@
           <select id="output-device"></select>
         </label>
       </div>
+      <div id="loading-indicator" class="loading-state" aria-live="polite">
+        <span class="loading-dot"></span>
+        <span>Loading Whisper model…</span>
+      </div>
       <p class="landing-hint">Choose how you'd like to start:</p>
       <div class="landing-actions">
-        <button id="btn-talk" class="entry-btn">🗣 Talk now
+        <button id="btn-talk" class="entry-btn" type="button" disabled>🗣 Push-to-talk mode
           <span class="entry-sub">Free conversation — just start speaking</span>
         </button>
-        <button id="btn-story" class="entry-btn">📖 Today's Wikipedia story
+        <button id="btn-story" class="entry-btn" type="button" disabled>📖 Today's Wikipedia story
           <span class="entry-sub">Hear a short Spanish story, then chat about it</span>
         </button>
       </div>

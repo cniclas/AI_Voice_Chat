@@ -9,7 +9,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ollama serve
 
 # Browser UI (recommended) — open http://127.0.0.1:8000 once it's up
-uv run python -m uvicorn web.server:app --host 127.0.0.1 --port 8000
+# --reload restarts the server on any *.py change so you never hit stale
+# backend code (uvicorn loads modules once at startup otherwise). It only
+# watches Python files, so the WAV/JSON/MD artifacts sessions write into
+# recordings/ don't trigger restarts.
+uv run python -m uvicorn web.server:app --host 127.0.0.1 --port 8000 --reload
 
 # Terminal UI (still supported)
 python main.py
