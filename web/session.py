@@ -51,6 +51,7 @@ class SessionOrchestrator:
         self.whisper_model = None
         self.whisper_lock = whisper_lock
         self.session_dir: Path | None = None
+        self.session_name: str | None = None
         self.profile: dict | None = None
         self.llm_history: list = []
         self.responses: list[Response] = []
@@ -123,6 +124,7 @@ class SessionOrchestrator:
     def _ensure_session_dir(self):
         if self.session_dir is None:
             self.session_dir = create_session_dir()
+            self.session_name = self.session_dir.name
 
     # -- Entry points --------------------------------------------------------
 
@@ -135,7 +137,7 @@ class SessionOrchestrator:
         if self.profile is None:
             self.profile = await asyncio.to_thread(curriculum.load_profile)
         self.llm_history = [{"role": "system", "content": build_system_prompt(None)}]
-        await self._send("mode", mode="talk")
+        await self._send("mode", mode="talk", session_name=self.session_name)
         await self._status("idle", _PROMPT_TO_SPEAK)
 
     async def _start_story(self):
@@ -144,7 +146,7 @@ class SessionOrchestrator:
             return
         self.mode = "story"
         self._ensure_session_dir()
-        await self._send("mode", mode="story")
+        await self._send("mode", mode="story", session_name=self.session_name)
 
         await self._status("thinking",
                            "Fetching today's Wikipedia story and writing your lesson… (this can take a moment)")
@@ -193,9 +195,11 @@ class SessionOrchestrator:
         Path(audio_path).write_bytes(audio_bytes)
 
         await self._status("thinking", "Transcribing what you said…")
+        user_start = datetime.now()
         async with self.whisper_lock:
             user_text = await asyncio.to_thread(
                 transcribe_audio, audio_path, self.whisper_model, language)
+        user_processing_ms = int((datetime.now() - user_start).total_seconds() * 1000)
         if not user_text:
             await self._send("no_speech")
             await self._status("idle", "No speech detected — try again.")
@@ -205,28 +209,44 @@ class SessionOrchestrator:
             author="user", language=language, text=user_text,
             timestamp=datetime.now(), audio_sample=audio_path,
         ))
-        await self._send("transcript", author="user", language=language, text=user_text)
+        await self._send(
+            "transcript",
+            author="user",
+            language=language,
+            text=user_text,
+            audio_filename=Path(audio_path).name,
+            processing_ms=user_processing_ms,
+        )
 
         await self._status("thinking", "Generating a response…")
+        assistant_start = datetime.now()
         try:
             response_text = await asyncio.to_thread(
                 query_llm, user_text, language, self.llm_history)
+            assistant_audio_path = generate_audio_filename(self.session_dir, "assistant", language)
+            self.responses.append(Response(
+                author="assistant", language=language, text=response_text,
+                timestamp=datetime.now(), audio_sample=assistant_audio_path,
+            ))
+
+            await self._status("thinking", "Synthesizing speech…")
+            audio_bytes = await asyncio.to_thread(
+                synthesize, response_text, lang=language,
+                output_file=assistant_audio_path, play=False,
+            )
         except requests.RequestException as e:
             await self._send("error", message=f"Ollama error: {e}. Make sure Ollama is running (ollama serve).")
             await self._status("idle", _PROMPT_TO_SPEAK)
             return
 
-        assistant_audio_path = generate_audio_filename(self.session_dir, "assistant", language)
-        self.responses.append(Response(
-            author="assistant", language=language, text=response_text,
-            timestamp=datetime.now(), audio_sample=assistant_audio_path,
-        ))
-        await self._send("transcript", author="assistant", language=language, text=response_text)
-
-        await self._status("thinking", "Synthesizing speech…")
-        audio_bytes = await asyncio.to_thread(
-            synthesize, response_text, lang=language,
-            output_file=assistant_audio_path, play=False,
+        assistant_processing_ms = int((datetime.now() - assistant_start).total_seconds() * 1000)
+        await self._send(
+            "transcript",
+            author="assistant",
+            language=language,
+            text=response_text,
+            audio_filename=Path(assistant_audio_path).name,
+            processing_ms=assistant_processing_ms,
         )
         await self._send("tts_audio", turn="reply")
         await self.ws.send_bytes(audio_bytes)
@@ -259,6 +279,12 @@ class SessionOrchestrator:
 
         homework_path = str(self.session_dir / "homework.md") if result.get("homework") else None
         try:
-            await self._send("done", transcript_path=str(transcript_path), homework_path=homework_path)
+            await self._send(
+                "done",
+                session_name=self.session_name,
+                transcript_filename=transcript_path.name,
+                homework_filename=Path(homework_path).name if homework_path else None,
+                lesson_filename=Path(homework_path).name if homework_path else None,
+            )
         except (WebSocketDisconnect, RuntimeError):
             pass

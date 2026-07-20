@@ -6,7 +6,18 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 import wave
+import warnings
+import logging
 from kokoro import KPipeline
+
+# Reduce noisy warnings from dependencies during startup.
+warnings.filterwarnings(
+    "ignore",
+    message="dropout option adds dropout after all but last recurrent layer",
+)
+warnings.filterwarnings("ignore", category=FutureWarning)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+logging.getLogger("torch").setLevel(logging.ERROR)
 
 # Kokoro-82M's native output sample rate.
 _MODEL_RATE = 24000
@@ -27,7 +38,10 @@ _SPEED_SCALE = 0.93
 # Load one pipeline per language upfront. Each pipeline lazily downloads (and
 # caches under ~/.cache/huggingface) the Kokoro-82M weights plus the
 # language's phonemizer data on first use.
-_pipelines = {lang: KPipeline(lang_code=code) for lang, (code, _voice) in _VOICES.items()}
+_pipelines = {
+    lang: KPipeline(lang_code=code, repo_id="hexgrad/Kokoro-82M")
+    for lang, (code, _voice) in _VOICES.items()
+}
 
 
 def _output_samplerate(default: int = 44100) -> int:

@@ -40,20 +40,25 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load Whisper synchronously during application startup so the FastAPI
-    # lifepan doesn't yield until the model is ready. This ensures the
-    # server's "Application startup complete" log appears after the model
-    # is fully loaded and avoids clients connecting to a partially-ready
-    # backend that might then drop connections.
+    # Start Whisper loading in the background so the web UI can be served
+    # immediately and show a "Loading" status while the model initializes.
     app.state.whisper_model = None
     app.state.whisper_ready = asyncio.Event()
     app.state.whisper_lock = asyncio.Lock()
 
+    async def _load_whisper():
+        try:
+            print("Loading Whisper model in background...")
+            model = await asyncio.to_thread(whisper.load_model, "large-v3")
+            app.state.whisper_model = model
+            app.state.whisper_ready.set()
+            print("Whisper ready.")
+        except Exception as e:
+            print(f"Whisper load failed: {e}")
+
+    # Fire-and-forget background loading task.
+    asyncio.create_task(_load_whisper())
     try:
-        print("Loading Whisper model...")
-        app.state.whisper_model = await asyncio.to_thread(whisper.load_model, "large-v3")
-        app.state.whisper_ready.set()
-        print("Whisper ready.")
         yield
     finally:
         # Nothing special to clean up for Whisper; keep consistent state.

@@ -20,6 +20,7 @@
   const completePanel = document.getElementById('complete-panel');
   const completeLinks = document.getElementById('complete-links');
   const loadingIndicator = document.getElementById('loading-indicator');
+  let sessionName = null;
 
   // Map backend avatar states to the CSS classes we actually have.
   const AVATAR_CLASS = {
@@ -50,14 +51,43 @@
     avatar.className = `avatar avatar--${AVATAR_CLASS[state] || 'idle'}`;
   }
 
-  function appendMessage(author, language, text) {
+  function formatDuration(ms) {
+    if (ms == null) return null;
+    if (ms < 1000) return `${ms.toFixed(0)} ms`;
+    return `${(ms / 1000).toFixed(1)} s`;
+  }
+
+  function appendMessage(author, language, text, audioFilename, processingMs = null) {
     const div = document.createElement('div');
     div.className = `msg msg--${author}`;
+    const header = document.createElement('div');
+    header.className = 'msg-header';
     const langTag = document.createElement('span');
     langTag.className = 'msg-lang';
     langTag.textContent = language;
-    div.appendChild(langTag);
-    div.appendChild(document.createTextNode(text));
+    header.appendChild(langTag);
+
+    if (processingMs != null) {
+      const timer = document.createElement('span');
+      timer.className = 'msg-timer';
+      timer.textContent = formatDuration(processingMs);
+      header.appendChild(timer);
+    }
+
+    div.appendChild(header);
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    body.textContent = text;
+    div.appendChild(body);
+
+    if (audioFilename && sessionName) {
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'metadata';
+      audio.className = 'msg-audio';
+      audio.src = `/session/${sessionName}/${encodeURIComponent(audioFilename)}`;
+      body.appendChild(audio);
+    }
     chatLog.appendChild(div);
     chatLog.scrollTop = chatLog.scrollHeight;
   }
@@ -194,6 +224,10 @@
         populateDevices();
         break;
       case 'mode':
+        sessionName = msg.session_name || sessionName;
+        enterConversation(msg.mode);
+        break;
+      case 'mode':
         enterConversation(msg.mode);
         break;
       case 'status':
@@ -211,7 +245,7 @@
         pendingBinaryTurn = msg.turn;
         break;
       case 'transcript':
-        appendMessage(msg.author, msg.language, msg.text);
+        appendMessage(msg.author, msg.language, msg.text, msg.audio_filename, msg.processing_ms);
         break;
       case 'no_speech':
         statusText.textContent = 'No speech detected, try again.';
@@ -227,6 +261,22 @@
     }
   }
 
+  async function playRemoteAudio(url) {
+    try {
+      setAvatarState('speaking');
+      statusText.textContent = 'Loading replay audio…';
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Failed to load ${response.status}`);
+      const blob = await response.blob();
+      await AudioPlayback.playBlob(blob);
+      statusText.textContent = 'Replay finished.';
+    } catch (error) {
+      statusText.textContent = `Could not replay audio: ${error.message}`;
+    } finally {
+      setAvatarState('idle');
+    }
+  }
+
   function finishSession(msg) {
     sessionFinished = true;
     landingPanel.hidden = true;
@@ -237,17 +287,25 @@
     phaseBadge.textContent = 'done';
 
     completeLinks.innerHTML = '';
-    if (msg.transcript_path) {
-      const p = document.createElement('p');
-      p.textContent = 'Transcript saved to your session folder.';
-      completeLinks.appendChild(p);
+    function addLink(href, text) {
+      const wrap = document.createElement('div');
+      const a = document.createElement('a');
+      a.href = href;
+      a.textContent = text;
+      a.target = '_blank';
+      wrap.appendChild(a);
+      completeLinks.appendChild(wrap);
     }
-    if (msg.homework_path) {
-      const p = document.createElement('p');
-      p.textContent = 'Homework saved to your session folder.';
-      completeLinks.appendChild(p);
+    if (msg.session_name && msg.transcript_filename) {
+      addLink(`/session/${msg.session_name}/${encodeURIComponent(msg.transcript_filename)}`, 'Open transcript');
     }
-    if (!msg.transcript_path) {
+    if (msg.session_name && msg.lesson_filename) {
+      addLink(`/session/${msg.session_name}/${encodeURIComponent(msg.lesson_filename)}`, 'Open lesson');
+    }
+    if (msg.session_name && msg.homework_filename) {
+      addLink(`/session/${msg.session_name}/${encodeURIComponent(msg.homework_filename)}`, 'Open homework');
+    }
+    if (!msg.transcript_filename) {
       const p = document.createElement('p');
       p.textContent = 'No conversation recorded.';
       completeLinks.appendChild(p);
