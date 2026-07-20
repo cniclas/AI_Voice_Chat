@@ -19,6 +19,7 @@
   const btnExit = document.getElementById('btn-exit');
   const completePanel = document.getElementById('complete-panel');
   const completeLinks = document.getElementById('complete-links');
+  const loadingIndicator = document.getElementById('loading-indicator');
 
   // Map backend avatar states to the CSS classes we actually have.
   const AVATAR_CLASS = {
@@ -32,9 +33,17 @@
   let pendingBinaryTurn = null;
   let sessionFinished = false;
   let reconnectDelay = 1000;
+  let backendReady = false;
 
   function wsOpen() {
     return ws && ws.readyState === WebSocket.OPEN;
+  }
+
+  function updateLandingState() {
+    const ready = backendReady && wsOpen();
+    btnTalk.disabled = !ready;
+    btnStory.disabled = !ready;
+    loadingIndicator.hidden = ready;
   }
 
   function setAvatarState(state) {
@@ -95,9 +104,11 @@
 
     ws.onopen = () => {
       reconnectDelay = 1000;
+      backendReady = false;
       phaseBadge.textContent = 'starting up';
       statusText.textContent = 'Loading Whisper and Piper…';
       setAvatarState('loading');
+      updateLandingState();
     };
 
     ws.onmessage = async (event) => {
@@ -115,9 +126,11 @@
       // so a page opened while the backend is still loading Whisper simply
       // connects once it's up instead of dead-ending at "Disconnected".
       if (sessionFinished) return;
+      backendReady = false;
       phaseBadge.textContent = 'reconnecting';
-      setAvatarState('idle');
-      statusText.textContent = 'Connection lost — reconnecting…';
+      setAvatarState('loading');
+      statusText.textContent = 'Loading Whisper model…';
+      updateLandingState();
       setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 10000);
     };
@@ -126,6 +139,7 @@
   function resetToLanding() {
     // A reconnect gets a brand-new server-side session; drop any stale
     // mid-session UI from the previous connection.
+    landingPanel.hidden = false;
     storyPanel.hidden = true;
     chatPanel.hidden = true;
     controls.hidden = true;
@@ -137,6 +151,7 @@
     btnEs.disabled = false;
     btnStop.disabled = true;
     btnExit.disabled = false;
+    updateLandingState();
   }
 
   async function handleAudioFrame(arrayBuffer) {
@@ -160,14 +175,22 @@
     phaseBadge.textContent = mode === 'story' ? 'story' : 'talking';
   }
 
+  function requestMode(mode) {
+    if (!wsOpen() || !backendReady) return;
+    if (sessionFinished) return;
+    const message = { type: mode === 'story' ? 'start_story' : 'start_talk' };
+    ws.send(JSON.stringify(message));
+  }
+
   function handleControlMessage(msg) {
     switch (msg.type) {
       case 'ready':
+        backendReady = true;
         resetToLanding();
         phaseBadge.textContent = 'ready';
         setAvatarState('idle');
-        landingPanel.hidden = false;
         statusText.textContent = 'Ready. Pick how you want to start.';
+        loadingIndicator.hidden = true;
         populateDevices();
         break;
       case 'mode':
@@ -268,8 +291,16 @@
     ws.send(buffer);
   }
 
-  btnTalk.addEventListener('click', () => wsOpen() && ws.send(JSON.stringify({ type: 'start_talk' })));
-  btnStory.addEventListener('click', () => wsOpen() && ws.send(JSON.stringify({ type: 'start_story' })));
+  btnTalk.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    requestMode('talk');
+  });
+  btnStory.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    requestMode('story');
+  });
   btnEn.addEventListener('click', () => startRecording('en'));
   btnEs.addEventListener('click', () => startRecording('es'));
   btnStop.addEventListener('click', stopRecording);
@@ -279,5 +310,6 @@
     btnExit.disabled = true;
   });
 
+  updateLandingState();
   connect();
 })();

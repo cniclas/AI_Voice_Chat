@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(_ROOT, "whisper"))
 sys.path.insert(0, os.path.join(_ROOT, "piper"))
 sys.path.insert(0, os.path.join(_ROOT, "audio_recorder"))
 
+import curriculum
 import whisper
 from record import record_once
 from tts import synthesize
@@ -46,6 +47,15 @@ from session_core import (
 RECORDING_PATH = os.path.join(tempfile.gettempdir(), "voice_chat_recording.wav")
 
 
+def resolve_mode(choice: str | None) -> str:
+    value = (choice or "").strip().lower()
+    if value in {"", "1", "talk", "t", "push", "push-to-talk"}:
+        return "talk"
+    if value in {"2", "story", "s", "wiki", "w"}:
+        return "story"
+    return "talk"
+
+
 def main():
     session_dir = create_session_dir()
     responses: list[Response] = []  # Track all conversation exchanges
@@ -53,13 +63,25 @@ def main():
     print("AI Spanish Teacher")
     print(f"Session folder: {session_dir}")
 
-    print("Fetching today's Wikipedia story...")
-    setup_state = session_setup_graph.invoke({"session_dir": str(session_dir)})
-    profile = setup_state["profile"]
-    if setup_state.get("setup_failed"):
-        print(f"Could not prepare today's story ({setup_state['setup_failed']}); "
-              "starting a plain conversation instead.")
-    daily = daily_story_from_setup_state(setup_state)
+    print("Choose how to start:")
+    print("  1) Push-to-talk (free conversation)")
+    print("  2) Today's Wikipedia story")
+    mode = resolve_mode(input("Enter 1 or 2 [1]: "))
+
+    profile = curriculum.load_profile()
+    setup_state = {}
+    daily = None
+
+    if mode == "story":
+        print("Fetching today's Wikipedia story...")
+        setup_state = session_setup_graph.invoke({"session_dir": str(session_dir)})
+        profile = setup_state["profile"]
+        if setup_state.get("setup_failed"):
+            print(f"Could not prepare today's story ({setup_state['setup_failed']}); "
+                  "starting a plain conversation instead.")
+        daily = daily_story_from_setup_state(setup_state)
+    else:
+        print("Starting a plain conversation.")
 
     print("Loading Whisper model...")
     whisper_model = whisper.load_model("large-v3")
