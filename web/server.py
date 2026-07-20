@@ -22,10 +22,10 @@ for _p in glob.glob(os.path.join(_ROOT, ".venv", "Lib", "site-packages")):
     site.addsitedir(_p)
 
 # Repo root (for curriculum/session_core/session_graphs) and the local
-# piper/whisper package directories, same layout main.py relies on.
+# kokoro/whisper package directories, same layout main.py relies on.
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "whisper"))
-sys.path.insert(0, os.path.join(_ROOT, "piper"))
+sys.path.insert(0, os.path.join(_ROOT, "kokoro"))
 
 import whisper
 from fastapi import FastAPI, WebSocket, HTTPException

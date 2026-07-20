@@ -106,7 +106,7 @@
       reconnectDelay = 1000;
       backendReady = false;
       phaseBadge.textContent = 'starting up';
-      statusText.textContent = 'Loading Whisper and Piper…';
+      statusText.textContent = 'Loading Whisper and Kokoro…';
       setAvatarState('loading');
       updateLandingState();
     };

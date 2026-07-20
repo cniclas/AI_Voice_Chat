@@ -67,10 +67,9 @@ class SessionOrchestrator:
 
     async def run(self):
         try:
-            await self._status("loading", "Loading Whisper and Piper…")
-            # Wait for the background model loader. If it fails the event
-            # may never be set; other exceptions are caught below so we can
-            # report them to the client.
+            await self._status("loading", "Loading Whisper and Kokoro…")
+            # Wait for the background model loader so the backend does not
+            # claim readiness until the model is actually available.
             await self.app_state.whisper_ready.wait()
             self.whisper_model = self.app_state.whisper_model
             await self._send("ready")
