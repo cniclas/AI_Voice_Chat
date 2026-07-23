@@ -158,24 +158,28 @@ class SessionOrchestrator:
             await self._send("error", message=self.setup_state["setup_failed"])
         daily = daily_story_from_setup_state(self.setup_state)
 
-        await self._send(
-            "story",
-            article_title=daily["article_title"] if daily else None,
-            story_title=daily["story_title"] if daily else None,
-            story=daily["story"] if daily else None,
-        )
-
         if daily:
             await self._status("speaking", "Reading today's story aloud…")
-            audio_bytes = await asyncio.to_thread(
+            await asyncio.to_thread(
                 synthesize,
                 f"{daily['story_title']}. {daily['story']}",
                 lang="es",
                 output_file=str(self.session_dir / "story_es.wav"),
                 play=False,
             )
+            # The story arrives as a normal assistant chat bubble, so it gets
+            # the same audio control as every other reply. Sent only after
+            # synthesize() has written story_es.wav: the bubble's audio
+            # element is the single playback source, and it fetches that file
+            # from the session route. tts_audio is just the auto-play cue.
+            await self._send(
+                "transcript",
+                author="assistant",
+                language="es",
+                text=f"{daily['story_title']}\n\n{daily['story']}",
+                audio_filename="story_es.wav",
+            )
             await self._send("tts_audio", turn="story")
-            await self.ws.send_bytes(audio_bytes)
             await self._wait_for("tts_playback_done")
 
         self.llm_history = [{"role": "system", "content": build_system_prompt(daily)}]
@@ -230,7 +234,7 @@ class SessionOrchestrator:
             ))
 
             await self._status("thinking", "Synthesizing speech…")
-            audio_bytes = await asyncio.to_thread(
+            await asyncio.to_thread(
                 synthesize, response_text, lang=language,
                 output_file=assistant_audio_path, play=False,
             )
@@ -248,8 +252,9 @@ class SessionOrchestrator:
             audio_filename=Path(assistant_audio_path).name,
             processing_ms=assistant_processing_ms,
         )
+        # Cue the client to auto-play the reply bubble's audio element (the
+        # WAV itself is fetched from the session route, not sent over the WS).
         await self._send("tts_audio", turn="reply")
-        await self.ws.send_bytes(audio_bytes)
 
     # -- Wrap-up -------------------------------------------------------------
 

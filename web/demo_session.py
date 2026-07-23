@@ -362,20 +362,23 @@ class DemoSessionOrchestrator:
         await asyncio.sleep(self.delays["story_fetch"])
 
         story = self.manuscript.get("story")
-        await self._send(
-            "story",
-            article_title=story["article_title"] if story else None,
-            story_title=story["story_title"] if story else None,
-            story=story["story"] if story else None,
-        )
-
         if story:
             await self._status("speaking", "Reading today's story aloud…")
             audio_bytes = _part_audio(
                 story, f"{story['story_title']}. {story['story']}", "es")
             (self.session_dir / "story_es.wav").write_bytes(audio_bytes)
+            # Mirror web/session.py: the story is a normal assistant bubble
+            # (sent after story_es.wav exists — the bubble's audio element is
+            # the single playback source and fetches it from the session
+            # route; tts_audio is just the auto-play cue).
+            await self._send(
+                "transcript",
+                author="assistant",
+                language="es",
+                text=f"{story['story_title']}\n\n{story['story']}",
+                audio_filename="story_es.wav",
+            )
             await self._send("tts_audio", turn="story")
-            await self.ws.send_bytes(audio_bytes)
             await self._wait_for("tts_playback_done")
 
         await self._status("idle", _PROMPT_TO_SPEAK)
@@ -455,8 +458,8 @@ class DemoSessionOrchestrator:
             audio_filename=Path(assistant_audio_path).name,
             processing_ms=assistant_processing_ms,
         )
+        # Cue the client to auto-play the reply bubble's audio element.
         await self._send("tts_audio", turn="reply")
-        await self.ws.send_bytes(reply_audio)
 
     # -- Wrap-up -------------------------------------------------------------
 

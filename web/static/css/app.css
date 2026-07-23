@@ -90,9 +90,6 @@ section {
 
 #status-text { color: var(--text-dim); font-size: 0.9rem; margin: 0; }
 
-#story-panel h2 { margin-top: 0; }
-#story-panel p { line-height: 1.5; color: var(--text-dim); }
-
 #chat-log {
   display: flex;
   flex-direction: column;
@@ -107,6 +104,9 @@ section {
   border-radius: 10px;
   line-height: 1.4;
 }
+
+/* Keep line breaks — the story bubble carries a title + paragraph. */
+.msg-body { white-space: pre-wrap; }
 
 .msg-header {
   display: flex;

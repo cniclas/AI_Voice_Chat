@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Spanish Teacher</title>
-  <link rel="stylesheet" href="/static/css/app.css">
+  <!-- The ?v= suffix busts stale browser caches whenever the frontend/protocol
+       changes together; bump it on breaking asset changes. -->
+  <link rel="stylesheet" href="/static/css/app.css?v=2">
 </head>
 <body>
   <header>
@@ -49,11 +51,6 @@
       </div>
     </section>
 
-    <section id="story-panel" hidden>
-      <h2 id="story-title"></h2>
-      <p id="story-text"></p>
-    </section>
-
     <section id="chat-panel" hidden>
       <div id="chat-log"></div>
     </section>
@@ -75,8 +72,8 @@
 
   <audio id="player"></audio>
 
-  <script src="/static/js/audio-playback.js"></script>
-  <script src="/static/js/audio-capture.js"></script>
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/audio-playback.js?v=2"></script>
+  <script src="/static/js/audio-capture.js?v=2"></script>
+  <script src="/static/js/app.js?v=2"></script>
 </body>
 </html>

@@ -3,9 +3,6 @@
   const avatar = document.getElementById('avatar');
   const statusText = document.getElementById('status-text');
   const landingPanel = document.getElementById('landing-panel');
-  const storyPanel = document.getElementById('story-panel');
-  const storyTitle = document.getElementById('story-title');
-  const storyText = document.getElementById('story-text');
   const chatPanel = document.getElementById('chat-panel');
   const chatLog = document.getElementById('chat-log');
   const controls = document.getElementById('controls');
@@ -31,7 +28,9 @@
   let ws = null;
   let recording = false;
   let currentLanguage = null;
-  let pendingBinaryTurn = null;
+  // The most recent assistant bubble's <audio> element — the single playback
+  // source that a tts_audio cue auto-plays.
+  let lastAssistantAudio = null;
   let sessionFinished = false;
   let reconnectDelay = 1000;
   let backendReady = false;
@@ -83,16 +82,34 @@
     body.textContent = text;
     div.appendChild(body);
 
+    let audio = null;
     if (audioFilename && sessionName) {
-      const audio = document.createElement('audio');
+      audio = document.createElement('audio');
       audio.controls = true;
       audio.preload = 'metadata';
       audio.className = 'msg-audio';
       audio.src = `/session/${sessionName}/${encodeURIComponent(audioFilename)}`;
+      AudioPlayback.applyTo(audio);
+      // Single-source rule: starting any bubble pauses every other one, so
+      // two voices can never overlap and the visible slider always tracks
+      // the sound actually playing.
+      audio.addEventListener('play', () => {
+        chatLog.querySelectorAll('audio').forEach((other) => {
+          if (other !== audio) other.pause();
+        });
+        setAvatarState('speaking');
+      });
+      const backToIdle = () => {
+        const anyPlaying = [...chatLog.querySelectorAll('audio')].some((a) => !a.paused);
+        if (!anyPlaying) setAvatarState('idle');
+      };
+      audio.addEventListener('pause', backToIdle);
+      audio.addEventListener('ended', backToIdle);
       body.appendChild(audio);
     }
     chatLog.appendChild(div);
     chatLog.scrollTop = chatLog.scrollHeight;
+    return audio;
   }
 
   async function populateDevices() {
@@ -148,11 +165,10 @@
       updateLandingState();
     };
 
-    ws.onmessage = async (event) => {
-      if (typeof event.data !== 'string') {
-        await handleAudioFrame(event.data);
-        return;
-      }
+    ws.onmessage = (event) => {
+      // Audio is no longer streamed over the WebSocket — bubbles fetch their
+      // WAVs from the session route. Ignore any stray binary frame.
+      if (typeof event.data !== 'string') return;
       handleControlMessage(JSON.parse(event.data));
     };
 
@@ -177,13 +193,12 @@
     // A reconnect gets a brand-new server-side session; drop any stale
     // mid-session UI from the previous connection.
     landingPanel.hidden = false;
-    storyPanel.hidden = true;
     chatPanel.hidden = true;
     controls.hidden = true;
     completePanel.hidden = true;
     chatLog.innerHTML = '';
     recording = false;
-    pendingBinaryTurn = null;
+    lastAssistantAudio = null;
     btnEn.disabled = false;
     btnEs.disabled = false;
     btnStop.disabled = true;
@@ -191,22 +206,39 @@
     updateLandingState();
   }
 
-  async function handleAudioFrame(arrayBuffer) {
-    const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
-    setAvatarState('speaking');
-    statusText.textContent = 'Playing back to you…';
-    await AudioPlayback.playBlob(blob);
-    setAvatarState('idle');
-    if (pendingBinaryTurn === 'story') {
-      if (wsOpen()) ws.send(JSON.stringify({ type: 'tts_playback_done' }));
-    } else {
-      statusText.textContent = demoMode
-        ? 'Your turn — press a language button for the next scripted line.'
-        : 'Your turn — press a language button and speak.';
-      btnEn.disabled = false;
-      btnEs.disabled = false;
+  // A tts_audio cue from the server: auto-play the just-appended assistant
+  // bubble through its own <audio> element. Because playback runs in the
+  // visible player itself, the slider is live from the first second and
+  // there is never a second, hidden voice to collide with.
+  async function playTranscriptAudio(turn) {
+    const el = lastAssistantAudio;
+    const finish = () => {
+      if (turn === 'story') {
+        if (wsOpen()) ws.send(JSON.stringify({ type: 'tts_playback_done' }));
+      } else {
+        statusText.textContent = demoMode
+          ? 'Your turn — press a language button for the next scripted line.'
+          : 'Your turn — press a language button and speak.';
+        btnEn.disabled = false;
+        btnEs.disabled = false;
+      }
+    };
+    if (!el) {
+      finish();
+      return;
     }
-    pendingBinaryTurn = null;
+    statusText.textContent = 'Playing back to you…';
+    el.addEventListener('ended', finish, { once: true });
+    try {
+      el.currentTime = 0;
+      await el.play();
+    } catch (e) {
+      // Autoplay refused or the file failed to load — leave it to the
+      // user's play button, but don't wedge the session flow.
+      el.removeEventListener('ended', finish);
+      finish();
+      statusText.textContent = 'Press play on the message to listen.';
+    }
   }
 
   function enterConversation(mode) {
@@ -254,19 +286,14 @@
           btnEs.disabled = false;
         }
         break;
-      case 'story':
-        if (msg.story) {
-          storyPanel.hidden = false;
-          storyTitle.textContent = msg.story_title;
-          storyText.textContent = msg.story;
-        }
-        break;
       case 'tts_audio':
-        pendingBinaryTurn = msg.turn;
+        playTranscriptAudio(msg.turn);
         break;
-      case 'transcript':
-        appendMessage(msg.author, msg.language, msg.text, msg.audio_filename, msg.processing_ms);
+      case 'transcript': {
+        const audioEl = appendMessage(msg.author, msg.language, msg.text, msg.audio_filename, msg.processing_ms);
+        if (msg.author === 'assistant') lastAssistantAudio = audioEl;
         break;
+      }
       case 'no_speech':
         statusText.textContent = 'No speech detected, try again.';
         setAvatarState('idle');
@@ -278,22 +305,6 @@
       case 'done':
         finishSession(msg);
         break;
-    }
-  }
-
-  async function playRemoteAudio(url) {
-    try {
-      setAvatarState('speaking');
-      statusText.textContent = 'Loading replay audio…';
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Failed to load ${response.status}`);
-      const blob = await response.blob();
-      await AudioPlayback.playBlob(blob);
-      statusText.textContent = 'Replay finished.';
-    } catch (error) {
-      statusText.textContent = `Could not replay audio: ${error.message}`;
-    } finally {
-      setAvatarState('idle');
     }
   }
 
