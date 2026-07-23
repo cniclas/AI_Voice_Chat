@@ -15,12 +15,14 @@ ollama serve
 # recordings/ don't trigger restarts.
 uv run python -m uvicorn web.server:app --host 127.0.0.1 --port 8000 --reload
 
-# UI-design demo mode — same frontend, but everything is simulated from the
-# manuscript in web/demo_manuscript.json: no mic (each language button feeds
-# the next scripted user line + AI answer), no Ollama/Whisper/Kokoro (replies
-# play as placeholder tones), and the session wraps up automatically once the
-# manuscript's turns run out. Starts instantly. The manuscript is re-read on
-# every connection, so edit the JSON and refresh the browser to see it.
+# UI-design demo mode — same frontend, but no mic/Ollama/Whisper/Kokoro:
+# web/demo_manuscript.json's "session" key points at a recorded session
+# folder, and each language button press replays its next real exchange
+# (transcript text + the original WAV audio); the story panel and homework
+# come from the same folder, and the session wraps up automatically once the
+# recorded turns run out. Without a "session" folder it falls back to the
+# manuscript's inline turns with placeholder tones. Starts instantly; the
+# manuscript is re-read on every connection, so edit and refresh the browser.
 uv run python -m uvicorn web.demo:app --host 127.0.0.1 --port 8000 --reload
 
 # Terminal UI (still supported)

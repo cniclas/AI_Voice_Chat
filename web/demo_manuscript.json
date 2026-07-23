@@ -1,5 +1,6 @@
 {
-  "_comment": "Predefined manuscript for demo mode (web/demo.py). Edit freely and just refresh the browser — it is re-read on every connection. 'delays_seconds' controls how long each fake pipeline phase takes, so you can feel the thinking/speaking UI states. Each language button press plays one exchange (scripted user line + AI answer) in the pressed language's variant; when the turns run out the session wraps up automatically.",
+  "_comment": "Script for demo mode (web/demo.py), re-read on every connection — edit and refresh the browser. 'session' points at a recorded session folder (relative to the repo root); the demo replays its story.md, transcript.md, homework.md and real WAV audio, and each language button press plays the next recorded exchange. If the folder is missing, the inline 'story'/'turns'/'homework' below are used instead, with placeholder tones. 'delays_seconds' controls how long each fake pipeline phase takes. When the turns run out the session wraps up automatically.",
+  "session": "recordings/2026-07-23_235034",
   "delays_seconds": {
     "story_fetch": 1.5,
     "transcribe": 0.8,

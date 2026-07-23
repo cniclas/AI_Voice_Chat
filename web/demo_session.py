@@ -1,37 +1,39 @@
 """DemoSessionOrchestrator: a stand-in for SessionOrchestrator that speaks the
 exact same WebSocket protocol but never touches Whisper, Ollama, Kokoro or
-Wikipedia. Every button press advances a predefined manuscript
-(web/demo_manuscript.json) instead, so the browser UI can be designed and
-iterated on with instant startup and zero model downloads.
+Wikipedia. Every button press advances a predefined script instead, so the
+browser UI can be designed and iterated on with instant startup and zero
+model downloads.
+
+The script comes from web/demo_manuscript.json. If the manuscript names a
+recorded session folder (its "session" key, e.g.
+"recordings/2026-07-23_235034"), the demo replays that real session: story.md
+and article.md provide the story panel, transcript.md provides the
+conversation turns, homework.md provides the wrap-up artifact, and the
+session's WAV files provide the actual audio (the student's real voice and
+Kokoro's real replies) — no synthesis needed. If the folder is missing or
+unparsable, the manuscript's inline "story"/"turns"/"homework" keys are used
+instead, with generated placeholder tones for audio.
 
 No microphone is involved: the "ready" handshake carries ``demo: true``, which
 tells the frontend to turn the language buttons into "feed the next scripted
 user line" triggers (a ``simulate_turn`` message) instead of recording. Each
-button press plays one full exchange — scripted user line, then scripted AI
-answer — and once the manuscript's turns are exhausted the session wraps up
-on its own (analysis status, homework, completion screen), simulating the
-whole arc end to end.
+button press plays one full exchange — user line, then AI answer — and once
+the script's turns are exhausted the session wraps up on its own (analysis
+status, homework, completion screen), simulating the whole arc end to end.
+Replayed turns keep their recorded language regardless of which language
+button advanced them; inline manuscript turns may carry en/es variants and
+mirror the pressed button.
 
-What the demo preserves so the *feel* matches the real app:
-
-- The full message protocol (status/mode/story/transcript/tts_audio/done …).
-- Timing: each phase sleeps a configurable delay (see "delays_seconds" in the
-  manuscript) so the thinking/speaking avatar states are visible.
-- Audio: turns synthesize a short voice-like placeholder tone whose length
-  scales with the text (lower pitch for the "user" voice), so the speaking
-  avatar state and the per-message replay controls work.
-- Artifacts: transcript.md and homework.md are written to recordings/demo so
-  the completion-screen links resolve.
-- The manuscript is re-read on every connection, so editing the JSON and
-  refreshing the browser is enough — no server restart needed.
-
-The mic-driven ``user_audio`` path is still handled for protocol
-compatibility, but the demo frontend never sends it.
+The manuscript (and the recorded session it points to) is re-read on every
+connection, so editing files and refreshing the browser is enough — no server
+restart needed. The mic-driven ``user_audio`` path is still handled for
+protocol compatibility, but the demo frontend never sends it.
 """
 
 import asyncio
 import io
 import json
+import re
 import shutil
 import wave
 from datetime import datetime
@@ -47,6 +49,7 @@ from session_core import (
     save_transcript,
 )
 
+_REPO_ROOT = Path(__file__).parent.parent
 MANUSCRIPT_PATH = Path(__file__).parent / "demo_manuscript.json"
 DEMO_SESSION_NAME = "demo"
 
@@ -61,16 +64,21 @@ _DEFAULT_DELAYS = {
     "analysis": 1.5,
 }
 
-# A stopped-immediately recording: anything shorter than ~0.25 s of 16-bit
-# 48 kHz mono PCM demos the no-speech path.
+# A stopped-immediately recording on the legacy mic path: anything shorter
+# than ~0.25 s of 16-bit 48 kHz mono PCM demos the no-speech path.
 _MIN_USER_AUDIO_BYTES = 24000
 
-# Placeholder "speech" parameters.
+# Placeholder "speech" parameters (used only when no recorded audio exists).
 _SAMPLE_RATE = 24000  # matches Kokoro's native rate
 _SECONDS_PER_WORD = 0.14
 _MAX_AUDIO_SECONDS = 7.0
 _BASE_PITCH_HZ = {"en": 210.0, "es": 175.0}
 _USER_PITCH_SCALE = 0.72  # the simulated student "voice" sits lower
+
+# `**[23:53:34] You (en):** text` — the format save_transcript() writes.
+_TRANSCRIPT_LINE = re.compile(r"\*\*\[\d\d:\d\d:\d\d\] (You|Tutor) \((\w+)\):\*\* (.+)")
+# Trailing HHMMSS_mmm in per-turn WAV names, for chronological ordering.
+_WAV_TIMESTAMP = re.compile(r"_(\d{6}_\d{3})\.wav$")
 
 
 def _placeholder_speech_wav(text: str, lang: str, pitch_hz: float | None = None) -> bytes:
@@ -105,13 +113,136 @@ def _placeholder_speech_wav(text: str, lang: str, pitch_hz: float | None = None)
     return buf.getvalue()
 
 
+def _wav_duration_seconds(wav_bytes: bytes) -> float:
+    try:
+        with wave.open(io.BytesIO(wav_bytes)) as wf:
+            return wf.getnframes() / wf.getframerate()
+    except Exception:
+        return max(len(wav_bytes) - 44, 0) / (2 * _SAMPLE_RATE)
+
+
+# ---------------------------------------------------------------------------
+# Script loading. Both sources normalize turns to the same shape:
+#   {"user":      {"variants": {lang: text, ...}, "audio_path": str | None},
+#    "assistant": {"variants": {lang: text, ...}, "audio_path": str | None}}
+# A recorded turn has exactly one variant (its recorded language) and a real
+# audio file; an inline turn may offer several variants and no audio.
+# ---------------------------------------------------------------------------
+
+def _heading_and_body(md_path: Path) -> tuple[str, str]:
+    """Split a markdown file into its first `# heading` and the rest."""
+    lines = md_path.read_text(encoding="utf-8").strip().splitlines()
+    heading = ""
+    body_lines = []
+    for line in lines:
+        if not heading and line.startswith("# "):
+            heading = line[2:].strip()
+        else:
+            body_lines.append(line)
+    return heading, "\n".join(body_lines).strip()
+
+
+def _session_wavs(session_dir: Path, author: str) -> list[Path]:
+    def key(p: Path):
+        m = _WAV_TIMESTAMP.search(p.name)
+        return m.group(1) if m else p.name
+    return sorted(session_dir.glob(f"{author}_*.wav"), key=key)
+
+
+def _load_recorded_session(manuscript: dict, session_dir: Path):
+    """Replace the manuscript's story/turns/homework with the recorded
+    session's content. Raises if the essential files are missing."""
+    story_title, story_body = _heading_and_body(session_dir / "story.md")
+    article_title = ""
+    if (session_dir / "article.md").is_file():
+        article_title, _ = _heading_and_body(session_dir / "article.md")
+    story_audio = session_dir / "story_es.wav"
+    manuscript["story"] = {
+        "article_title": article_title or story_title,
+        "story_title": story_title,
+        "story": story_body,
+        "audio_path": str(story_audio) if story_audio.is_file() else None,
+    }
+
+    transcript_text = (session_dir / "transcript.md").read_text(encoding="utf-8")
+    entries = [m.groups() for m in map(_TRANSCRIPT_LINE.match, transcript_text.splitlines()) if m]
+    user_wavs = _session_wavs(session_dir, "user")
+    tutor_wavs = _session_wavs(session_dir, "assistant")
+
+    turns = []
+    pending_user = None
+    user_i = tutor_i = 0
+    for author, lang, text in entries:
+        if author == "You":
+            audio = user_wavs[user_i] if user_i < len(user_wavs) else None
+            user_i += 1
+            pending_user = {"variants": {lang: text.strip()},
+                            "audio_path": str(audio) if audio else None}
+        elif pending_user is not None:
+            audio = tutor_wavs[tutor_i] if tutor_i < len(tutor_wavs) else None
+            tutor_i += 1
+            turns.append({
+                "user": pending_user,
+                "assistant": {"variants": {lang: text.strip()},
+                              "audio_path": str(audio) if audio else None},
+            })
+            pending_user = None
+    if not turns:
+        raise ValueError(f"no conversation turns found in {session_dir / 'transcript.md'}")
+    manuscript["turns"] = turns
+
+    if (session_dir / "homework.md").is_file():
+        manuscript["homework"] = (session_dir / "homework.md").read_text(encoding="utf-8")
+
+
+def _normalize_inline(manuscript: dict):
+    """Bring the manuscript's inline fallback content to the same shape."""
+    manuscript["turns"] = [
+        {"user": {"variants": turn["user"], "audio_path": None},
+         "assistant": {"variants": turn["assistant"], "audio_path": None}}
+        for turn in manuscript.get("turns", [])
+    ]
+    story = manuscript.get("story")
+    if story:
+        story.setdefault("audio_path", None)
+
+
 def _load_manuscript() -> dict:
     manuscript = json.loads(MANUSCRIPT_PATH.read_text(encoding="utf-8"))
     manuscript["delays_seconds"] = {
         **_DEFAULT_DELAYS,
         **manuscript.get("delays_seconds", {}),
     }
+    session_rel = manuscript.get("session")
+    if session_rel:
+        try:
+            _load_recorded_session(manuscript, (_REPO_ROOT / session_rel).resolve())
+            return manuscript
+        except Exception as e:
+            print(f"Demo: could not replay recorded session {session_rel!r} ({e}); "
+                  "falling back to the manuscript's inline content.")
+    _normalize_inline(manuscript)
     return manuscript
+
+
+def _pick_variant(part: dict, preferred_lang: str) -> tuple[str, str]:
+    """Return (language, text): the pressed language's variant when the turn
+    offers one, otherwise the turn's own (recorded) language."""
+    variants = part["variants"]
+    if preferred_lang in variants:
+        return preferred_lang, variants[preferred_lang]
+    return next(iter(variants.items()))
+
+
+def _part_audio(part: dict, text: str, lang: str, pitch_hz: float | None = None) -> bytes:
+    """The recorded WAV for this line if the script has one, else a
+    placeholder tone."""
+    if part.get("audio_path"):
+        try:
+            return Path(part["audio_path"]).read_bytes()
+        except OSError:
+            pass
+    return _placeholder_speech_wav(text, lang, pitch_hz=pitch_hz)
 
 
 class _SessionEnded(Exception):
@@ -132,8 +263,8 @@ class DemoSessionOrchestrator:
         self.turn_index = 0
         self.mode: str | None = None
         self.awaiting_mode = True
-        # Duration of the last reply tone, so the auto-wrap-up after the final
-        # manuscript turn waits for its client-side playback to finish.
+        # Duration of the last reply audio, so the auto-wrap-up after the
+        # final turn waits for its client-side playback to finish.
         self._last_reply_seconds = 0.0
 
     async def _send(self, type_: str, **payload):
@@ -185,7 +316,7 @@ class DemoSessionOrchestrator:
                 else:
                     await self._play_scripted_turn(message.get("language", "en"))
                 if self.turn_index >= len(self.manuscript["turns"]):
-                    # Manuscript exhausted — let the last reply finish playing
+                    # Script exhausted — let the last reply finish playing
                     # client-side, then wrap the session up automatically.
                     await asyncio.sleep(self._last_reply_seconds + 0.3)
                     break
@@ -240,8 +371,8 @@ class DemoSessionOrchestrator:
 
         if story:
             await self._status("speaking", "Reading today's story aloud…")
-            audio_bytes = _placeholder_speech_wav(
-                f"{story['story_title']}. {story['story']}", "es")
+            audio_bytes = _part_audio(
+                story, f"{story['story_title']}. {story['story']}", "es")
             (self.session_dir / "story_es.wav").write_bytes(audio_bytes)
             await self._send("tts_audio", turn="story")
             await self.ws.send_bytes(audio_bytes)
@@ -265,22 +396,21 @@ class DemoSessionOrchestrator:
         await self._play_scripted_turn(language, audio_bytes)
 
     async def _play_scripted_turn(self, language: str, user_audio_bytes: bytes | None = None):
-        """Play the next manuscript exchange: the scripted user line, then the
-        scripted assistant answer, with the same statuses and timing the real
-        pipeline produces. Without mic audio (the simulate_turn path) the user
-        line gets a lower-pitched placeholder tone of its own."""
-        turns = self.manuscript["turns"]
-        turn = turns[self.turn_index]
+        """Play the next scripted exchange — user line, then assistant answer
+        — with the same statuses and timing the real pipeline produces.
+        Recorded turns replay their original text, language, and audio; inline
+        turns follow the pressed language button and get placeholder tones."""
+        turn = self.manuscript["turns"][self.turn_index]
         self.turn_index += 1
-        user_text = turn["user"].get(language) or turn["user"]["en"]
-        assistant_text = turn["assistant"].get(language) or turn["assistant"]["en"]
+        user_lang, user_text = _pick_variant(turn["user"], language)
+        asst_lang, asst_text = _pick_variant(turn["assistant"], language)
 
         if user_audio_bytes is None:
-            user_audio_bytes = _placeholder_speech_wav(
-                user_text, language,
-                pitch_hz=_BASE_PITCH_HZ.get(language, 200.0) * _USER_PITCH_SCALE,
+            user_audio_bytes = _part_audio(
+                turn["user"], user_text, user_lang,
+                pitch_hz=_BASE_PITCH_HZ.get(user_lang, 200.0) * _USER_PITCH_SCALE,
             )
-        audio_path = generate_audio_filename(self.session_dir, "user", language)
+        audio_path = generate_audio_filename(self.session_dir, "user", user_lang)
         Path(audio_path).write_bytes(user_audio_bytes)
 
         await self._status("thinking", "Transcribing what you said…")
@@ -289,13 +419,13 @@ class DemoSessionOrchestrator:
         user_processing_ms = int((datetime.now() - user_start).total_seconds() * 1000)
 
         self.responses.append(Response(
-            author="user", language=language, text=user_text,
+            author="user", language=user_lang, text=user_text,
             timestamp=datetime.now(), audio_sample=audio_path,
         ))
         await self._send(
             "transcript",
             author="user",
-            language=language,
+            language=user_lang,
             text=user_text,
             audio_filename=Path(audio_path).name,
             processing_ms=user_processing_ms,
@@ -307,12 +437,12 @@ class DemoSessionOrchestrator:
 
         await self._status("thinking", "Synthesizing speech…")
         await asyncio.sleep(self.delays["synthesize"])
-        assistant_audio_path = generate_audio_filename(self.session_dir, "assistant", language)
-        reply_audio = _placeholder_speech_wav(assistant_text, language)
+        assistant_audio_path = generate_audio_filename(self.session_dir, "assistant", asst_lang)
+        reply_audio = _part_audio(turn["assistant"], asst_text, asst_lang)
         Path(assistant_audio_path).write_bytes(reply_audio)
-        self._last_reply_seconds = max(len(reply_audio) - 44, 0) / (2 * _SAMPLE_RATE)
+        self._last_reply_seconds = _wav_duration_seconds(reply_audio)
         self.responses.append(Response(
-            author="assistant", language=language, text=assistant_text,
+            author="assistant", language=asst_lang, text=asst_text,
             timestamp=datetime.now(), audio_sample=assistant_audio_path,
         ))
 
@@ -320,8 +450,8 @@ class DemoSessionOrchestrator:
         await self._send(
             "transcript",
             author="assistant",
-            language=language,
-            text=assistant_text,
+            language=asst_lang,
+            text=asst_text,
             audio_filename=Path(assistant_audio_path).name,
             processing_ms=assistant_processing_ms,
         )
