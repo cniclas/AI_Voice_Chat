@@ -1,0 +1,48 @@
+{
+  "_comment": "Predefined manuscript for demo mode (web/demo.py). Edit freely and just refresh the browser — it is re-read on every connection. 'delays_seconds' controls how long each fake pipeline phase takes, so you can feel the thinking/speaking UI states. Each language button press plays one exchange (scripted user line + AI answer) in the pressed language's variant; when the turns run out the session wraps up automatically.",
+  "delays_seconds": {
+    "story_fetch": 1.5,
+    "transcribe": 0.8,
+    "generate": 1.1,
+    "synthesize": 0.4,
+    "analysis": 1.5
+  },
+  "story": {
+    "article_title": "Ice cream cone",
+    "story_title": "El barquillo que salvó el helado",
+    "story": "Era el verano de 1904 en San Luis, durante la gran Feria Mundial. Hacía muchísimo calor y todo el mundo quería helado. Arnold, un joven vendedor, tenía un problema terrible: ¡se le acabaron los platos! La gente esperaba en una fila larga y él no sabía qué hacer. A su lado, un señor sirio llamado Ernest vendía barquillos, unas galletas finas y crujientes, pero nadie las compraba con tanto calor. Ernest miró la fila, miró sus galletas, y tuvo una idea brillante: enrolló un barquillo en forma de cono y se lo ofreció a Arnold. «¡Pon el helado aquí dentro!», le dijo. Al principio Arnold dudó, pero probó. A la gente le encantó: podían caminar por la feria comiendo su helado sin plato ni cuchara. Así, gracias a un problema y a dos vecinos ingeniosos, nació el cono de helado que conocemos hoy."
+  },
+  "turns": [
+    {
+      "user": {
+        "en": "I really liked the story! I didn't know the ice cream cone was invented at a fair.",
+        "es": "¡Me gustó mucho el cuento! No sabía que el cono de helado se inventó en una feria."
+      },
+      "assistant": {
+        "en": "I'm glad you liked it! It's a fun piece of history. Have you ever been to a big fair or festival like that one?",
+        "es": "¡Me alegro mucho! Es una historia divertida, ¿verdad? ¿Alguna vez has ido a una feria grande como esa?"
+      }
+    },
+    {
+      "user": {
+        "en": "Yes, I went to a summer festival last year. There was a lot of food and music.",
+        "es": "Sí, fui a un festival de verano el año pasado. Había mucha comida y música."
+      },
+      "assistant": {
+        "en": "That sounds wonderful! What was your favorite food there? Did you try anything new?",
+        "es": "¡Qué maravilla! ¿Cuál fue tu comida favorita? ¿Probaste algo nuevo?"
+      }
+    },
+    {
+      "user": {
+        "en": "I tried churros for the first time. They were delicious, especially with chocolate.",
+        "es": "Probé churros por primera vez. Estaban deliciosos, sobre todo con chocolate."
+      },
+      "assistant": {
+        "en": "Churros with chocolate is a classic! In Spain people often eat them for breakfast. Would you like to try that some day?",
+        "es": "¡Churros con chocolate es un clásico! En España mucha gente los toma para desayunar. ¿Te gustaría probar eso algún día?"
+      }
+    }
+  ],
+  "homework": "# Homework — demo\n\n### Homework: El barquillo que salvó el helado\n#### Focus points\n\n* **Preterite vs. imperfect**: Use the imperfect for background (\"hacía calor\") and the preterite for events (\"tuvo una idea\").\nExample: Hacía calor cuando Ernest tuvo su idea brillante.\n* **Food vocabulary**: Practice words like \"barquillo\", \"sabor\" and \"crujiente\".\nExample: El barquillo era fino y crujiente.\n* **Expressing preferences**: Use \"me gustaría\" + infinitive for wishes.\nExample: Me gustaría probar churros con chocolate.\n\n#### Exercises\n\n1. Write a short paragraph about a food you tried for the first time, using the preterite and the imperfect.\nEjemplo: Probé churros por primera vez en un festival. Hacía calor y había mucha gente.\n\n2. Imagine you are at the 1904 World's Fair. Order an ice cream in Spanish, asking about the flavors.\nPregunta: ¿Qué sabores de helado tiene hoy?\n\n3. Describe your favorite dessert using at least three adjectives.\nEjemplo: Mi postre favorito es el flan: es dulce, suave y delicioso.\n\n#### Vocabulary list\n\n| Word | English gloss | Example sentence |\n| --- | --- | --- |\n| barquillo | wafer | Ernest enrolló un barquillo en forma de cono. |\n| sabor | flavor | ¿Qué sabor de helado pedirías? |\n| crujiente | crunchy | La galleta era fina y crujiente. |\n"
+}

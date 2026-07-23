@@ -35,6 +35,9 @@
   let sessionFinished = false;
   let reconnectDelay = 1000;
   let backendReady = false;
+  // Set from the server's ready message. In demo mode the language buttons
+  // feed the next scripted manuscript line instead of recording the mic.
+  let demoMode = false;
 
   function wsOpen() {
     return ws && ws.readyState === WebSocket.OPEN;
@@ -93,11 +96,15 @@
   }
 
   async function populateDevices() {
-    try {
-      const temp = await navigator.mediaDevices.getUserMedia({ audio: true });
-      temp.getTracks().forEach((t) => t.stop());
-    } catch (e) {
-      statusText.textContent = 'Microphone permission is required to record.';
+    // Demo mode never opens the mic, so don't ask for permission (device
+    // labels may then be generic — fine for a design playground).
+    if (!demoMode) {
+      try {
+        const temp = await navigator.mediaDevices.getUserMedia({ audio: true });
+        temp.getTracks().forEach((t) => t.stop());
+      } catch (e) {
+        statusText.textContent = 'Microphone permission is required to record.';
+      }
     }
 
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -193,7 +200,11 @@
     if (pendingBinaryTurn === 'story') {
       if (wsOpen()) ws.send(JSON.stringify({ type: 'tts_playback_done' }));
     } else {
-      statusText.textContent = 'Your turn — press a language button and speak.';
+      statusText.textContent = demoMode
+        ? 'Your turn — press a language button for the next scripted line.'
+        : 'Your turn — press a language button and speak.';
+      btnEn.disabled = false;
+      btnEs.disabled = false;
     }
     pendingBinaryTurn = null;
   }
@@ -216,10 +227,13 @@
     switch (msg.type) {
       case 'ready':
         backendReady = true;
+        demoMode = !!msg.demo;
         resetToLanding();
-        phaseBadge.textContent = 'ready';
+        phaseBadge.textContent = demoMode ? 'demo' : 'ready';
         setAvatarState('idle');
-        statusText.textContent = 'Ready. Pick how you want to start.';
+        statusText.textContent = demoMode
+          ? 'Demo mode — the buttons play a scripted session, no mic needed.'
+          : 'Ready. Pick how you want to start.';
         loadingIndicator.hidden = true;
         populateDevices();
         break;
@@ -233,6 +247,12 @@
       case 'status':
         if (msg.state) setAvatarState(msg.state);
         if (msg.message) statusText.textContent = msg.message;
+        // Back to idle means the turn is over — make the language buttons
+        // pressable again (they're the simulate triggers in demo mode).
+        if (msg.state === 'idle' && !recording) {
+          btnEn.disabled = false;
+          btnEs.disabled = false;
+        }
         break;
       case 'story':
         if (msg.story) {
@@ -312,7 +332,22 @@
     }
   }
 
+  function sendSimulatedTurn(language) {
+    // Demo mode: no recording — ask the server to play the next scripted
+    // exchange (user line + AI answer) in the pressed language. The disabled
+    // state doubles as the in-flight guard until the reply has played.
+    if (!wsOpen() || btnEn.disabled) return;
+    btnEn.disabled = true;
+    btnEs.disabled = true;
+    setAvatarState('thinking');
+    ws.send(JSON.stringify({ type: 'simulate_turn', language }));
+  }
+
   async function startRecording(language) {
+    if (demoMode) {
+      sendSimulatedTurn(language);
+      return;
+    }
     if (recording) return;
     recording = true;
     currentLanguage = language;
