@@ -67,13 +67,20 @@ A session follows a five-phase arc, shared by both the browser UI (`web/server.p
 ## Skills
 
 `.claude/skills/language-lesson/` builds a standalone written lesson from any source text
-(story, article, fact block): a graded Spanish story targeting a chosen grammar focus at a
-CEFR level, plus a word-for-word literal English gloss alongside a natural translation, so
-the learner can trace any single word. It runs on Claude rather than the local Ollama model
-and is independent of the session pipeline above, but reads the same
+(story, article, fact block): a graded story targeting a chosen grammar focus at a CEFR
+level, plus a word-for-word literal English gloss alongside a natural translation, so the
+learner can trace any single word. It runs on Claude rather than the local Ollama model and
+is independent of the session pipeline above, but reads the same
 `recordings/student_profile.json` for the default level and vocab to weave in, and writes to
-a gitignored `lessons/` directory. `references/cefr-es.md` carries per-level calibration;
-`references/focus-patterns.md` carries per-grammar-point guidance.
+a gitignored `lessons/` directory.
+
+Its references split along what generalizes and what doesn't: `references/levels.md` holds
+the language-neutral CEFR bands (text budget, clause complexity, the *functions* a reader
+can handle), while `references/languages/<code>.md` maps those functions onto one language's
+forms, focus patterns, and glossing quirks. Only `es.md` ships complete; the skill writes a
+new language file the first time it's asked for another language, so a second lesson in that
+language stays calibrated to the same scale. Note that lessons outside `en`/`es` are
+text-only — `kokoro/tts.py` has no voice for them.
 
 ## Key constraints
 
