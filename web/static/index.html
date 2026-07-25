@@ -6,7 +6,7 @@
   <title>AI Spanish Teacher</title>
   <!-- The ?v= suffix busts stale browser caches whenever the frontend/protocol
        changes together; bump it on breaking asset changes. -->
-  <link rel="stylesheet" href="/static/css/app.css?v=2">
+  <link rel="stylesheet" href="/static/css/app.css?v=3">
 </head>
 <body>
   <header>
@@ -45,8 +45,8 @@
         <button id="btn-talk" class="entry-btn" type="button" disabled>🗣 Push-to-talk mode
           <span class="entry-sub">Free conversation — just start speaking</span>
         </button>
-        <button id="btn-story" class="entry-btn" type="button" disabled>📖 Today's Wikipedia story
-          <span class="entry-sub">Hear a short Spanish story, then chat about it</span>
+        <button id="btn-challenge" class="entry-btn" type="button" disabled>📝 Translation challenge
+          <span class="entry-sub">Hear today's Spanish story, translate it aloud into English, get it marked — then keep talking</span>
         </button>
       </div>
     </section>
@@ -72,8 +72,8 @@
 
   <audio id="player"></audio>
 
-  <script src="/static/js/audio-playback.js?v=2"></script>
-  <script src="/static/js/audio-capture.js?v=2"></script>
-  <script src="/static/js/app.js?v=2"></script>
+  <script src="/static/js/audio-playback.js?v=3"></script>
+  <script src="/static/js/audio-capture.js?v=3"></script>
+  <script src="/static/js/app.js?v=3"></script>
 </body>
 </html>

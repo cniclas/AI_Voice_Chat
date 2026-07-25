@@ -9,7 +9,7 @@
   const inputSelect = document.getElementById('input-device');
   const outputSelect = document.getElementById('output-device');
   const btnTalk = document.getElementById('btn-talk');
-  const btnStory = document.getElementById('btn-story');
+  const btnChallenge = document.getElementById('btn-challenge');
   const btnEn = document.getElementById('btn-en');
   const btnEs = document.getElementById('btn-es');
   const btnStop = document.getElementById('btn-stop');
@@ -34,6 +34,12 @@
   let sessionFinished = false;
   let reconnectDelay = 1000;
   let backendReady = false;
+  // "translate" while the challenge waits for the spoken English translation
+  // (Spanish is not an option for that turn), "converse" otherwise.
+  let stage = 'converse';
+  // What to put back on screen once a reply finishes playing. The server owns
+  // it, so the prompt after the story is "translate it" and not the generic one.
+  let idlePrompt = 'Your turn — press a language button and speak.';
   // Set from the server's ready message. In demo mode the language buttons
   // feed the next scripted manuscript line instead of recording the mic.
   let demoMode = false;
@@ -45,8 +51,20 @@
   function updateLandingState() {
     const ready = backendReady && wsOpen();
     btnTalk.disabled = !ready;
-    btnStory.disabled = !ready;
+    btnChallenge.disabled = !ready;
     loadingIndicator.hidden = ready;
+  }
+
+  // Re-arm the record buttons for the next turn. Spanish stays out of reach
+  // during the translation stage: the challenge is to say the story's meaning
+  // in English, and a Spanish answer would skip it.
+  function enableRecordButtons() {
+    if (recording) return;
+    btnEn.disabled = false;
+    btnEs.disabled = stage === 'translate';
+    btnEs.title = stage === 'translate'
+      ? 'Translate into English first — press 🎙 English.'
+      : '';
   }
 
   function setAvatarState(state) {
@@ -110,6 +128,24 @@
     chatLog.appendChild(div);
     chatLog.scrollTop = chatLog.scrollHeight;
     return audio;
+  }
+
+  // A generated artifact the student can open mid-session — the lesson with
+  // its literal translation, or the written-up review. The server only sends
+  // these once they're safe to read (the lesson is the answer key, so it
+  // arrives after the translation has been marked).
+  function appendArtifact(filename, label) {
+    if (!sessionName) return;
+    const div = document.createElement('div');
+    div.className = 'msg msg--artifact';
+    const a = document.createElement('a');
+    a.href = `/session/${sessionName}/${encodeURIComponent(filename)}`;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = label || filename;
+    div.appendChild(a);
+    chatLog.appendChild(div);
+    chatLog.scrollTop = chatLog.scrollHeight;
   }
 
   async function populateDevices() {
@@ -199,8 +235,9 @@
     chatLog.innerHTML = '';
     recording = false;
     lastAssistantAudio = null;
-    btnEn.disabled = false;
-    btnEs.disabled = false;
+    stage = 'converse';
+    idlePrompt = 'Your turn — press a language button and speak.';
+    enableRecordButtons();
     btnStop.disabled = true;
     btnExit.disabled = false;
     updateLandingState();
@@ -218,9 +255,8 @@
       } else {
         statusText.textContent = demoMode
           ? 'Your turn — press a language button for the next scripted line.'
-          : 'Your turn — press a language button and speak.';
-        btnEn.disabled = false;
-        btnEs.disabled = false;
+          : idlePrompt;
+        enableRecordButtons();
       }
     };
     if (!el) {
@@ -245,13 +281,13 @@
     landingPanel.hidden = true;
     chatPanel.hidden = false;
     controls.hidden = false;
-    phaseBadge.textContent = mode === 'story' ? 'story' : 'talking';
+    phaseBadge.textContent = mode === 'challenge' ? 'challenge' : 'talking';
   }
 
   function requestMode(mode) {
     if (!wsOpen() || !backendReady) return;
     if (sessionFinished) return;
-    const message = { type: mode === 'story' ? 'start_story' : 'start_talk' };
+    const message = { type: mode === 'challenge' ? 'start_challenge' : 'start_talk' };
     ws.send(JSON.stringify(message));
   }
 
@@ -273,18 +309,18 @@
         sessionName = msg.session_name || sessionName;
         enterConversation(msg.mode);
         break;
-      case 'mode':
-        enterConversation(msg.mode);
+      case 'stage':
+        stage = msg.stage;
+        if (msg.prompt) idlePrompt = msg.prompt;
+        phaseBadge.textContent = stage === 'translate' ? 'translate' : 'talking';
+        enableRecordButtons();
         break;
       case 'status':
         if (msg.state) setAvatarState(msg.state);
         if (msg.message) statusText.textContent = msg.message;
         // Back to idle means the turn is over — make the language buttons
         // pressable again (they're the simulate triggers in demo mode).
-        if (msg.state === 'idle' && !recording) {
-          btnEn.disabled = false;
-          btnEs.disabled = false;
-        }
+        if (msg.state === 'idle') enableRecordButtons();
         break;
       case 'tts_audio':
         playTranscriptAudio(msg.turn);
@@ -294,6 +330,9 @@
         if (msg.author === 'assistant') lastAssistantAudio = audioEl;
         break;
       }
+      case 'artifact':
+        appendArtifact(msg.filename, msg.label);
+        break;
       case 'no_speech':
         statusText.textContent = 'No speech detected, try again.';
         setAvatarState('idle');
@@ -327,15 +366,17 @@
       wrap.appendChild(a);
       completeLinks.appendChild(wrap);
     }
-    if (msg.session_name && msg.transcript_filename) {
-      addLink(`/session/${msg.session_name}/${encodeURIComponent(msg.transcript_filename)}`, 'Open transcript');
-    }
-    if (msg.session_name && msg.lesson_filename) {
-      addLink(`/session/${msg.session_name}/${encodeURIComponent(msg.lesson_filename)}`, 'Open lesson');
-    }
-    if (msg.session_name && msg.homework_filename) {
-      addLink(`/session/${msg.session_name}/${encodeURIComponent(msg.homework_filename)}`, 'Open homework');
-    }
+    const artifacts = [
+      [msg.transcript_filename, 'Open transcript'],
+      [msg.lesson_filename, 'Open lesson (story + literal translation)'],
+      [msg.review_filename, 'Open translation review'],
+      [msg.homework_filename, 'Open homework'],
+    ];
+    artifacts.forEach(([filename, label]) => {
+      if (msg.session_name && filename) {
+        addLink(`/session/${msg.session_name}/${encodeURIComponent(filename)}`, label);
+      }
+    });
     if (!msg.transcript_filename) {
       const p = document.createElement('p');
       p.textContent = 'No conversation recorded.';
@@ -366,14 +407,15 @@
     btnEs.disabled = true;
     btnStop.disabled = false;
     setAvatarState('listening');
-    statusText.textContent = `Listening (${language})… press Stop when you're done.`;
+    statusText.textContent = stage === 'translate'
+      ? 'Listening — say what the story means, sentence by sentence. Press Stop when done.'
+      : `Listening (${language})… press Stop when you're done.`;
     try {
       await AudioCapture.start();
     } catch (e) {
       statusText.textContent = `Could not start recording: ${e.message}`;
       recording = false;
-      btnEn.disabled = false;
-      btnEs.disabled = false;
+      enableRecordButtons();
       btnStop.disabled = true;
       setAvatarState('idle');
     }
@@ -382,8 +424,7 @@
   async function stopRecording() {
     if (!recording) return;
     recording = false;
-    btnEn.disabled = false;
-    btnEs.disabled = false;
+    enableRecordButtons();
     btnStop.disabled = true;
     setAvatarState('thinking');
     statusText.textContent = 'Transcribing…';
@@ -400,10 +441,10 @@
     event.stopPropagation();
     requestMode('talk');
   });
-  btnStory.addEventListener('click', (event) => {
+  btnChallenge.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    requestMode('story');
+    requestMode('challenge');
   });
   btnEn.addEventListener('click', () => startRecording('en'));
   btnEs.addEventListener('click', () => startRecording('es'));

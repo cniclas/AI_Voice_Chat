@@ -48,6 +48,21 @@ STORY_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT + (
     "CUENTO:\n{story}"
 )
 
+CHALLENGE_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT + (
+    "\n\nEl estudiante acaba de hacer un reto de traducción: escuchó un cuento en "
+    "español y lo tradujo en voz alta a su idioma nativo, el inglés. Ya recibió la "
+    "corrección. Ahora puede preguntar lo que quiera sobre el cuento, sobre una frase "
+    "concreta o sobre sus errores; responde con ejemplos del cuento mismo, citando la "
+    "frase de la que hablas. El enfoque gramatical de hoy es: {focus}.\n\n"
+    "CUENTO ({story_title}):\n{story}\n\n"
+    "{review_context}"
+)
+
+REVIEW_CONTEXT_TEMPLATE = (
+    "CORRECCIÓN DE SU TRADUCCIÓN:\n{summary}\n{findings}\n\n"
+    "No repitas la corrección entera; el estudiante ya la tiene delante."
+)
+
 CONTEXT_EXTRACT_CHARS = 1200  # article extract length embedded in the system prompt
 
 LANG_REMINDER = {
@@ -152,6 +167,30 @@ def build_system_prompt(daily: dict | None) -> str:
         article_title=daily["article_title"],
         article_extract=daily["article_extract"][:CONTEXT_EXTRACT_CHARS],
         story=daily["story"],
+    )
+
+
+def build_challenge_system_prompt(lesson: dict, review: dict | None) -> str:
+    """System prompt for the conversation that follows a translation challenge.
+
+    The tutor gets the story and the review findings, so "why is it *le* there"
+    can be answered from the text the student just worked through instead of
+    from a generic explanation.
+    """
+    review_context = ""
+    if review:
+        findings = "\n".join(
+            f"- Frase {f.get('sentence', '?')} ({f.get('verdict', '')}): "
+            f"{f.get('topic', '')} — {f.get('explanation', '')}"
+            for f in review.get("findings", [])
+        )
+        review_context = REVIEW_CONTEXT_TEMPLATE.format(
+            summary=review.get("summary", ""), findings=findings)
+    return CHALLENGE_SYSTEM_PROMPT_TEMPLATE.format(
+        focus=lesson.get("focus", ""),
+        story_title=lesson.get("title", ""),
+        story=lesson.get("story", ""),
+        review_context=review_context,
     )
 
 
