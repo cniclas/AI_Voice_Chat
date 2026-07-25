@@ -1,0 +1,7 @@
+# The tokenizer assets are ASCII text (base64 token, space, integer rank per
+# line), so git would normally treat them as text and translate line endings on
+# checkout. On Windows — the platform this project targets — that would rewrite
+# LF to CRLF and corrupt the ranks tiktoken parses out of them. Pin both asset
+# types to binary so they round-trip byte-for-byte on every platform.
+*.tiktoken -text
+*.npz -text

@@ -43,6 +43,8 @@ python -m venv .venv
 
 Kokoro TTS model weights and per-language phonemizer data download automatically from Hugging Face on first use (cached under the user's Hugging Face cache dir) — no manual voice download step needed.
 
+`requirements.txt` installs Whisper with `-e ./whisper`, and that directory is a trimmed copy of openai/whisper **committed to this repo** (it used to be gitignored, which meant a fresh clone could not install at all). Nothing to clone by hand. See `whisper/README.md` for the upstream commit it was taken from, what was removed, and how to update it.
+
 On Windows, `pyaudio` may need a pre-built wheel. If `pip install pyaudio` fails, install via:
 
 ```powershell
