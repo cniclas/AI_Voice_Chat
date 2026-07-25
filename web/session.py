@@ -70,11 +70,12 @@ class _SessionEnded(Exception):
 
 
 class SessionOrchestrator:
-    def __init__(self, ws: WebSocket, app_state, whisper_lock: asyncio.Lock):
+    def __init__(self, ws: WebSocket, app_state, whisper_lock: asyncio.Lock, user):
         self.ws = ws
         self.app_state = app_state
         self.whisper_model = None
         self.whisper_lock = whisper_lock
+        self.user = user
         self.session_dir: Path | None = None
         self.session_name: str | None = None
         self.profile: dict | None = None
@@ -164,8 +165,8 @@ class SessionOrchestrator:
 
     def _ensure_session_dir(self):
         if self.session_dir is None:
-            self.session_dir = create_session_dir()
-            self.session_name = self.session_dir.name
+            self.session_dir = create_session_dir(self.user.recordings_dir)
+            self.session_name = f"{self.user.id}/{self.session_dir.name}"
 
     def _progress_reporter(self):
         """A thread-safe `progress(done, total, label)` for the lesson build,
@@ -197,7 +198,7 @@ class SessionOrchestrator:
         self.mode = "talk"
         self._ensure_session_dir()
         if self.profile is None:
-            self.profile = await asyncio.to_thread(curriculum.load_profile)
+            self.profile = await asyncio.to_thread(curriculum.load_profile, self.user.profile_path)
         self.llm_history = [{"role": "system", "content": build_system_prompt(None)}]
         await self._send("mode", mode="talk", session_name=self.session_name)
         await self._status("idle", _PROMPT_TO_SPEAK)
@@ -216,7 +217,7 @@ class SessionOrchestrator:
             "Fetching today's Wikipedia article and building your translation challenge…")
         self.setup_state = await asyncio.to_thread(
             session_setup_graph.invoke,
-            {"session_dir": str(self.session_dir), "mode": "challenge"},
+            {"session_dir": str(self.session_dir), "mode": "challenge", "user_id": self.user.id},
             {"configurable": {"progress": self._progress_reporter()}},
         )
         self.profile = self.setup_state["profile"]
@@ -454,6 +455,7 @@ class SessionOrchestrator:
             "lesson": self.lesson,
             "review": self.review,
             "spoken_turns": sum(1 for r in self.responses if r.author == "user"),
+            "user_id": self.user.id,
         })
 
         homework_path = str(self.session_dir / "homework.md") if result.get("homework") else None
@@ -472,10 +474,10 @@ class SessionOrchestrator:
         """Track record for a challenge the student left before speaking. Runs
         off the event loop; the article itself was already recorded eagerly by
         the setup graph."""
-        profile = self.profile or curriculum.load_profile()
+        profile = self.profile or curriculum.load_profile(self.user.profile_path)
         curriculum.record_practice(
             profile,
-            session_name=self.session_name,
+            session_name=self.session_dir.name,
             mode=self.mode or "challenge",
             focus=self.lesson.get("focus"),
             level=self.lesson.get("level"),
@@ -483,4 +485,4 @@ class SessionOrchestrator:
             translated=False,
             spoken_turns=0,
         )
-        curriculum.save_profile(profile)
+        curriculum.save_profile(profile, self.user.profile_path)

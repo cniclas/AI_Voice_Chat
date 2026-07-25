@@ -19,6 +19,10 @@ and the answer is already on the page.
 
 ## Inputs
 
+Before any of these: confirm which student the lesson is for — Niclas or
+Alejandra — if that isn't already clear from the conversation. It decides the
+`<user>` segment in every path below, so get it settled first.
+
 Five things shape a lesson. Only the first is essential — fill in the rest from
 context, state what you assumed in one line, and get on with writing:
 
@@ -26,7 +30,7 @@ context, state what you assumed in one line, and get on with writing:
 |---|---|
 | **Source context** — the story, facts, or article to build from | Required. If genuinely absent, ask for it; everything else is guessable, this isn't. |
 | **Focus** — the grammar being drilled | Read the source: a historical account wants past tenses, a plan or forecast wants future and conditional. Propose one and say so. Or pull the top recurring weakness from the student profile. |
-| **Level** — A1-C2 | `recordings/student_profile.json` → `"level"`. Falls back to B1, which is what this repo assumes. |
+| **Level** — A1-C2 | `recordings/<user>/student_profile.json` → `"level"`. Falls back to B1, which is what this repo assumes. |
 | **Theme / tone** — cozy, mysterious, comic, documentary | Optional. Default to warm and concrete; the app reads these aloud to a casual learner, so avoid violence, disaster, and death even when the source is full of them. |
 | **Language pair** | Target Spanish, native English, unless told otherwise. |
 
@@ -52,7 +56,7 @@ Skipping these is the usual failure mode. Written from feel, "B1 Spanish" drifts
 a level or two upward within a paragraph and the learner bounces off a text they
 were supposed to be able to read.
 
-If `recordings/student_profile.json` exists, also pull `vocab_to_practice` and
+If `recordings/<user>/student_profile.json` exists, also pull `vocab_to_practice` and
 the top `weaknesses`; weaving a few of those words into the story costs nothing
 and makes the lesson land on what this particular student keeps missing.
 
@@ -225,15 +229,15 @@ for pleasure, and breaking it into numbered fragments would ruin both.
 
 ## Saving the lesson
 
-Write to `lessons/<YYYY-MM-DD>-<lang>-<slug>.md`, slug derived from the title.
-Create the directory if needed. It is gitignored, alongside `recordings/`, since
-lessons are personal learning material.
+Write to `lessons/<user>/<YYYY-MM-DD>-<lang>-<slug>.md`, slug derived from the
+title. Create the directory if needed. It is gitignored, alongside
+`recordings/`, since lessons are personal learning material.
 
 Optionally synthesize the story for listening practice — same voice path the app
 uses:
 
 ```bash
-uv run python -c "from kokoro.tts import synthesize; synthesize('<story prose>', 'es', 'lessons/<slug>.wav', play=False)"
+uv run python -c "from kokoro.tts import synthesize; synthesize('<story prose>', 'es', 'lessons/<user>/<slug>.wav', play=False)"
 ```
 
 Pass only the story prose, not the whole markdown file. This pulls in the Kokoro

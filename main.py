@@ -1,3 +1,4 @@
+import argparse
 import sys
 import os
 import glob
@@ -27,6 +28,7 @@ sys.path.insert(0, os.path.join(_ROOT, "kokoro"))
 sys.path.insert(0, os.path.join(_ROOT, "audio_recorder"))
 
 import curriculum
+import users
 import whisper
 from record import record_once
 from tts import synthesize
@@ -56,11 +58,44 @@ def resolve_mode(choice: str | None) -> str:
     return "talk"
 
 
+def resolve_user(arg_user: str | None) -> users.User:
+    if arg_user:
+        user = users.get_user(arg_user.strip().lower())
+        if user is None:
+            raise SystemExit(
+                f"Unknown user '{arg_user}'. Valid choices: {', '.join(sorted(users.USERS))}"
+            )
+        return user
+
+    all_users = users.list_users()
+    print("Who's practicing today?")
+    for i, u in enumerate(all_users, start=1):
+        print(f"  [{i}] {u.display_name}")
+    choice = input("Enter a number [1]: ").strip()
+    try:
+        index = int(choice) - 1
+        if not (0 <= index < len(all_users)):
+            raise ValueError
+    except ValueError:
+        index = 0
+    return all_users[index]
+
+
 def main():
-    session_dir = create_session_dir()
+    parser = argparse.ArgumentParser(description="AI Spanish Teacher (terminal UI)")
+    parser.add_argument(
+        "--user",
+        choices=sorted(users.USERS),
+        default=None,
+        help="Practicing user (skips the interactive 'who's practicing' prompt).",
+    )
+    args = parser.parse_args()
+    user = resolve_user(args.user)
+
+    session_dir = create_session_dir(user.recordings_dir)
     responses: list[Response] = []  # Track all conversation exchanges
 
-    print("AI Spanish Teacher")
+    print(f"AI Spanish Teacher — {user.display_name}")
     print(f"Session folder: {session_dir}")
 
     print("Choose how to start:")
@@ -68,13 +103,13 @@ def main():
     print("  2) Today's Wikipedia story")
     mode = resolve_mode(input("Enter 1 or 2 [1]: "))
 
-    profile = curriculum.load_profile()
+    profile = curriculum.load_profile(user.profile_path)
     setup_state = {}
     daily = None
 
     if mode == "story":
         print("Fetching today's Wikipedia story...")
-        setup_state = session_setup_graph.invoke({"session_dir": str(session_dir)})
+        setup_state = session_setup_graph.invoke({"session_dir": str(session_dir), "user_id": user.id})
         profile = setup_state["profile"]
         if setup_state.get("setup_failed"):
             print(f"Could not prepare today's story ({setup_state['setup_failed']}); "
@@ -180,6 +215,7 @@ def main():
         "transcript_text": transcript_text,
         "story": setup_state.get("story"),
         "spoken_turns": sum(1 for r in responses if r.author == "user"),
+        "user_id": user.id,
     })
 
     print("¡Hasta luego!")

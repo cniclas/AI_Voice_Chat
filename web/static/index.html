@@ -28,26 +28,35 @@
     </section>
 
     <section id="landing-panel">
-      <div class="device-pickers">
-        <label>Microphone
-          <select id="input-device"></select>
-        </label>
-        <label>Speaker
-          <select id="output-device"></select>
-        </label>
+      <div id="user-picker">
+        <p class="landing-hint">Who's practicing?</p>
+        <div class="landing-actions">
+          <button class="entry-btn user-btn" type="button" data-user="niclas">Niclas</button>
+          <button class="entry-btn user-btn" type="button" data-user="alejandra">Alejandra</button>
+        </div>
       </div>
-      <div id="loading-indicator" class="loading-state" aria-live="polite">
-        <span class="loading-dot"></span>
-        <span>Loading Whisper model…</span>
-      </div>
-      <p class="landing-hint">Choose how you'd like to start:</p>
-      <div class="landing-actions">
-        <button id="btn-talk" class="entry-btn" type="button" disabled>🗣 Push-to-talk mode
-          <span class="entry-sub">Free conversation — just start speaking</span>
-        </button>
-        <button id="btn-challenge" class="entry-btn" type="button" disabled>📝 Translation challenge
-          <span class="entry-sub">Hear today's Spanish story, translate it aloud into English, get it marked — then keep talking</span>
-        </button>
+      <div id="session-setup" hidden>
+        <div class="device-pickers">
+          <label>Microphone
+            <select id="input-device"></select>
+          </label>
+          <label>Speaker
+            <select id="output-device"></select>
+          </label>
+        </div>
+        <div id="loading-indicator" class="loading-state" aria-live="polite">
+          <span class="loading-dot"></span>
+          <span>Loading Whisper model…</span>
+        </div>
+        <p class="landing-hint">Choose how you'd like to start:</p>
+        <div class="landing-actions">
+          <button id="btn-talk" class="entry-btn" type="button" disabled>🗣 Push-to-talk mode
+            <span class="entry-sub">Free conversation — just start speaking</span>
+          </button>
+          <button id="btn-challenge" class="entry-btn" type="button" disabled>📝 Translation challenge
+            <span class="entry-sub">Hear today's Spanish story, translate it aloud into English, get it marked — then keep talking</span>
+          </button>
+        </div>
       </div>
     </section>
 

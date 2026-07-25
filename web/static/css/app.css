@@ -256,6 +256,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .entry-btn:hover:not(:disabled) { filter: brightness(1.15); }
 
+/* Marks whichever user picked last time — a hint, not a default selection. */
+.entry-btn.last-used { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
 .entry-sub {
   font-size: 0.8rem;
   font-weight: 400;

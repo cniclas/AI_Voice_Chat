@@ -28,7 +28,8 @@ uv run python -m uvicorn web.server:app --host 127.0.0.1 --port 8000 --reload
 # refresh the browser.
 uv run python -m uvicorn web.demo:app --host 127.0.0.1 --port 8000 --reload
 
-# Terminal UI (still supported)
+# Terminal UI (still supported) — prompts for which user is practicing unless
+# --user niclas|alejandra is passed
 python main.py
 ```
 
@@ -57,9 +58,11 @@ pipwin install pyaudio
 
 ## Architecture
 
+Every session begins with a one-time user selection — there is no login or auth beyond it. `users.py` at repo root hardcodes the two supported accounts (`USERS = {"niclas": ..., "alejandra": ...}`), each a `User` with a `recordings_dir` and `profile_path` under `recordings/<id>/`. The terminal UI (`main.py`) picks one via an interactive numbered prompt or a `--user niclas`/`--user alejandra` flag; the browser UI shows a landing-panel picker before the session starts, and the chosen id travels as a `?user=` query parameter on the WebSocket connection. Everything the five phases below touch — profile, session recordings, generated lessons — forks per user from that one choice.
+
 A session follows a five-phase arc, shared by both the browser UI (`web/server.py` + `web/session.py`) and the terminal UI (`main.py`):
 
-1. **Prepare** — `session_setup_graph` (a LangGraph workflow in `session_graphs.py`) loads the persistent student profile (`recordings/student_profile.json`), fetches English Wikipedia's "on this day" events feed for today's calendar date (`curriculum.fetch_onthisday_candidates()`, biased toward events before 1950 for richer historical material, falling back to the full day's pool if too few pre-1950 candidates exist), has the LLM pick the most story-friendly candidate (avoiding recently covered topics and disturbing subject matter), fetches a fuller plaintext extract, and generates a graded ~150-200-word semi-fictional Spanish story from it (weaving in vocabulary the student needs to practice). Saved to the session folder as `article.md`/`story.md`. Any failure (Wikipedia unreachable, Ollama down, bad JSON) sets `setup_failed` and the graph routes straight to `END`, so the caller degrades to a plain conversation instead of crashing.
+1. **Prepare** — `session_setup_graph` (a LangGraph workflow in `session_graphs.py`) loads the persistent student profile (`recordings/<user>/student_profile.json`, one per user — `niclas` or `alejandra`, as defined in `users.py`), fetches English Wikipedia's "on this day" events feed for today's calendar date (`curriculum.fetch_onthisday_candidates()`, biased toward events before 1950 for richer historical material, falling back to the full day's pool if too few pre-1950 candidates exist), has the LLM pick the most story-friendly candidate (avoiding recently covered topics and disturbing subject matter), fetches a fuller plaintext extract, and generates a graded ~150-200-word semi-fictional Spanish story from it (weaving in vocabulary the student needs to practice). Saved to the session folder as `article.md`/`story.md`. Any failure (Wikipedia unreachable, Ollama down, bad JSON) sets `setup_failed` and the graph routes straight to `END`, so the caller degrades to a plain conversation instead of crashing.
 
    The graph's `mode` picks the content branch. `"story"` (the terminal UI) generates the story above. `"challenge"` (the browser's translation challenge, below) instead builds a full graded lesson — story plus the sentence-by-sentence literal/natural translation — and additionally writes `lesson.md`. Both branches leave the prose in `story`, so narration, system prompts and homework downstream don't care which ran.
 2. **Narrate** — the story is read aloud once via `kokoro/tts.py:synthesize()` (Spanish voice) to `story_es.wav`, before the conversation loop starts. The terminal UI plays it locally (`play=True`); the browser UI shows the story as a normal assistant chat bubble and auto-plays that bubble's own `<audio>` element, which fetches `story_es.wav` from the session route.
@@ -88,8 +91,9 @@ The browser's second entry point — replacing the old "today's Wikipedia story"
 Two Claude-run skills form a written-practice loop alongside the spoken session pipeline:
 `language-lesson` produces a graded story, the student reads their English translation of it
 aloud, and `translation-review` marks that translation. Both run on Claude rather than the
-local Ollama model, and both read and write the same `recordings/student_profile.json`, so
-weaknesses found by reading accumulate in the same tally as weaknesses found by speaking.
+local Ollama model, and both read and write the same per-user `recordings/<user>/student_profile.json`
+(`niclas` or `alejandra`, per `users.py`), so weaknesses found by reading accumulate in the
+same tally as weaknesses found by speaking.
 
 The browser's translation challenge runs that same loop unattended against Ollama —
 `translation_challenge.py` is the port, `skill_refs.py` is what keeps it honest by feeding
@@ -103,9 +107,9 @@ gloss); the app's version exists so a session can do it without Claude in the lo
 (story, article, fact block): a graded story targeting a chosen grammar focus at a CEFR
 level, plus a word-for-word literal English gloss alongside a natural translation, so the
 learner can trace any single word. It runs on Claude rather than the local Ollama model and
-is independent of the session pipeline above, but reads the same
-`recordings/student_profile.json` for the default level and vocab to weave in, and writes to
-a gitignored `lessons/` directory.
+is independent of the session pipeline above, but reads that same per-user
+`recordings/<user>/student_profile.json` for the default level and vocab to weave in, and
+writes to a gitignored `lessons/` directory.
 
 Its references split along what generalizes and what doesn't: `references/levels.md` holds
 the language-neutral CEFR bands (text budget, clause complexity, the *functions* a reader
@@ -141,5 +145,5 @@ live session would produce; `scripts/record_review.py` merges findings into the 
 - Only two languages are supported: `"en"` and `"es"`. The language selection happens at record time and flows through the entire pipeline; the tutor mirrors it per turn (fixed from an earlier bug where it always replied in Spanish).
 - `kokoro/tts.py` loads a `KPipeline` per language at module level, which downloads Kokoro-82M weights from Hugging Face on first run if they aren't already cached; a cold first import can take a while on a slow connection.
 - `audio_recorder/` has its own `venv` and `requirements.txt` that is separate from the root venv; the root `requirements.txt` uses `pyaudio` instead. It's only used by the terminal UI — the browser UI captures audio client-side.
-- `recordings/student_profile.json` is the one piece of cross-session state; it's gitignored (personal learning data) along with the rest of `recordings/`.
+- `recordings/<user>/student_profile.json` (one per user — `niclas` or `alejandra`, as defined in `users.py`) is the one piece of cross-session state; it's gitignored (personal learning data) along with the rest of `recordings/`.
 - The browser UI's output-device picker relies on `HTMLMediaElement.setSinkId()`, which is Chromium-only as of writing (Chrome/Edge); other browsers fall back to the system default output device.
