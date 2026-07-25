@@ -66,6 +66,14 @@ A session follows a five-phase arc, shared by both the browser UI (`web/server.p
 
 ## Skills
 
+Two Claude-run skills form a written-practice loop alongside the spoken session pipeline:
+`language-lesson` produces a graded story, the student reads their English translation of it
+aloud, and `translation-review` marks that translation. Both run on Claude rather than the
+local Ollama model, and both read and write the same `recordings/student_profile.json`, so
+weaknesses found by reading accumulate in the same tally as weaknesses found by speaking.
+
+### language-lesson
+
 `.claude/skills/language-lesson/` builds a standalone written lesson from any source text
 (story, article, fact block): a graded story targeting a chosen grammar focus at a CEFR
 level, plus a word-for-word literal English gloss alongside a natural translation, so the
@@ -81,6 +89,27 @@ forms, focus patterns, and glossing quirks. Only `es.md` ships complete; the ski
 new language file the first time it's asked for another language, so a second lesson in that
 language stays calibrated to the same scale. Note that lessons outside `en`/`es` are
 text-only — `kokoro/tts.py` has no voice for them.
+
+### translation-review
+
+`.claude/skills/translation-review/` marks a spoken translation. The student reads a lesson's
+Spanish aloud in English, Whisper transcribes it, and the skill compares that against the
+lesson's `Nat.` line (the target) using the `Lit.` gloss to pinpoint which morpheme was lost.
+
+Because the student is translating *into* their native language, their English is a readout
+rather than the subject — every deviation is read as a question about the Spanish. The hard
+part is separating comprehension errors from transcription noise: spoken input has no
+spelling, so homophones, punctuation, and disfluency are never findings, and the working
+discriminator is repetition (one deviation is a mishearing, the same one three times is a
+rule the student is missing). Findings land in one of three verdicts — Missed (meaning
+wrong), Blurred (a drilled distinction flattened), Check (English can't show it, so ask
+instead of guessing). `references/judging.md` holds that language-neutral logic;
+`references/languages/es.md` holds the Spanish→English trap catalogue.
+
+`scripts/transcribe.py` wraps `session_core.transcribe_audio()` so transcripts match what a
+live session would produce; `scripts/record_review.py` merges findings into the profile via
+`curriculum.merge_analysis_into_profile()` rather than hand-editing the JSON, keeping the
+`occurrences` tally consistent with the session pipeline's.
 
 ## Key constraints
 
