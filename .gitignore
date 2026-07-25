@@ -2,6 +2,10 @@
 venv
 recordings/
 
+# Generated lessons (see .claude/skills/language-lesson) — personal learning
+# material, same class as recordings/.
+lessons/
+
 
 __pycache__/
 *.pyc

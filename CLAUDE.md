@@ -64,6 +64,24 @@ A session follows a five-phase arc, shared by both the browser UI (`web/server.p
 
 `curriculum.py` owns all Wikipedia/Ollama-content logic (fetching, prompts, JSON schemas, profile persistence). `session_graphs.py` sequences the Prepare and Analyze phases as LangGraph workflows (deterministic, mostly linear pipelines with a "skip to END on failure" pattern) — the real-time conversation loop is not a graph, since LangGraph adds nothing for interactive audio. `session_core.py` holds the logic shared by both UIs: transcription, LLM turn-taking, transcript persistence, and system-prompt construction. `main.py` is a thin terminal orchestrator; `web/server.py`/`web/session.py` is the equivalent browser orchestrator, driven by WebSocket messages instead of a blocking loop.
 
+## Skills
+
+`.claude/skills/language-lesson/` builds a standalone written lesson from any source text
+(story, article, fact block): a graded story targeting a chosen grammar focus at a CEFR
+level, plus a word-for-word literal English gloss alongside a natural translation, so the
+learner can trace any single word. It runs on Claude rather than the local Ollama model and
+is independent of the session pipeline above, but reads the same
+`recordings/student_profile.json` for the default level and vocab to weave in, and writes to
+a gitignored `lessons/` directory.
+
+Its references split along what generalizes and what doesn't: `references/levels.md` holds
+the language-neutral CEFR bands (text budget, clause complexity, the *functions* a reader
+can handle), while `references/languages/<code>.md` maps those functions onto one language's
+forms, focus patterns, and glossing quirks. Only `es.md` ships complete; the skill writes a
+new language file the first time it's asked for another language, so a second lesson in that
+language stays calibrated to the same scale. Note that lessons outside `en`/`es` are
+text-only — `kokoro/tts.py` has no voice for them.
+
 ## Key constraints
 
 - Only two languages are supported: `"en"` and `"es"`. The language selection happens at record time and flows through the entire pipeline; the tutor mirrors it per turn (fixed from an earlier bug where it always replied in Spanish).
