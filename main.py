@@ -175,9 +175,11 @@ def main():
     transcript_text = format_transcript_for_lesson(responses)
     session_analysis_graph.invoke({
         "session_dir": str(session_dir),
+        "mode": mode,
         "profile": profile,
         "transcript_text": transcript_text,
         "story": setup_state.get("story"),
+        "spoken_turns": sum(1 for r in responses if r.author == "user"),
     })
 
     print("¡Hasta luego!")

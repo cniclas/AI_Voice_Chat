@@ -8,11 +8,20 @@ The script comes from web/demo_manuscript.json. If the manuscript names a
 recorded session folder (its "session" key, e.g.
 "recordings/2026-07-23_235034"), the demo replays that real session: story.md
 and article.md provide the story panel, transcript.md provides the
-conversation turns, homework.md provides the wrap-up artifact, and the
-session's WAV files provide the actual audio (the student's real voice and
-Kokoro's real replies) — no synthesis needed. If the folder is missing or
-unparsable, the manuscript's inline "story"/"turns"/"homework" keys are used
-instead, with generated placeholder tones for audio.
+conversation turns, homework.md provides the wrap-up artifact, lesson.md and
+translation_review.md (when the session was a translation challenge) provide
+the linked artifacts, and the session's WAV files provide the actual audio
+(the student's real voice and Kokoro's real replies) — no synthesis needed. If
+the folder is missing or unparsable, the manuscript's inline
+"story"/"turns"/"translation"/"homework" keys are used instead, with generated
+placeholder tones for audio.
+
+The translation challenge is scripted the same way: the first button press
+after the story plays the manuscript's "translation" block (the student's
+spoken English, then the marked review) instead of a conversation turn, and
+the remaining presses continue through "turns". The linked lesson.md is the
+recorded session's when there is one, and otherwise just the story prose —
+the demo exists to lay out the UI, not to fake an answer key.
 
 No microphone is involved: the "ready" handshake carries ``demo: true``, which
 tells the frontend to turn the language buttons into "feed the next scripted
@@ -53,16 +62,34 @@ _REPO_ROOT = Path(__file__).parent.parent
 MANUSCRIPT_PATH = Path(__file__).parent / "demo_manuscript.json"
 DEMO_SESSION_NAME = "demo"
 
-# Mirrors web/session.py so the idle status line reads identically.
+# Mirror web/session.py so the idle status lines and filenames match exactly.
 _PROMPT_TO_SPEAK = "Your turn — press a language button and speak."
+_PROMPT_TO_TRANSLATE = (
+    "Your turn to translate — press 🎙 English and say what the story means, "
+    "sentence by sentence."
+)
+LESSON_FILENAME = "lesson.md"
+REVIEW_FILENAME = "translation_review.md"
 
 _DEFAULT_DELAYS = {
     "story_fetch": 1.5,
+    "lesson_step": 0.25,
     "transcribe": 0.8,
     "generate": 1.1,
+    "review": 2.0,
     "synthesize": 0.4,
     "analysis": 1.5,
 }
+
+# Status lines the real lesson build emits, so the demo shows the same
+# progression (the real one is a minute of local inference).
+_LESSON_STEPS = [
+    "writing today's story",
+    "glossing sentence 1 of 8",
+    "glossing sentence 4 of 8",
+    "glossing sentence 8 of 8",
+    "writing the grammar notes",
+]
 
 # A stopped-immediately recording on the legacy mic path: anything shorter
 # than ~0.25 s of 16-bit 48 kHz mono PCM demos the no-speech path.
@@ -194,6 +221,16 @@ def _load_recorded_session(manuscript: dict, session_dir: Path):
     if (session_dir / "homework.md").is_file():
         manuscript["homework"] = (session_dir / "homework.md").read_text(encoding="utf-8")
 
+    # A recorded translation challenge carries its own lesson and review; use
+    # them in place of the manuscript's inline stand-ins.
+    lesson_file = session_dir / LESSON_FILENAME
+    if lesson_file.is_file():
+        manuscript["lesson_markdown"] = lesson_file.read_text(encoding="utf-8")
+    review_file = session_dir / REVIEW_FILENAME
+    if review_file.is_file():
+        manuscript.setdefault("translation", {})["review_markdown"] = \
+            review_file.read_text(encoding="utf-8")
+
 
 def _normalize_inline(manuscript: dict):
     """Bring the manuscript's inline fallback content to the same shape."""
@@ -262,6 +299,10 @@ class DemoSessionOrchestrator:
         self.responses: list[Response] = []
         self.turn_index = 0
         self.mode: str | None = None
+        self.stage = "converse"
+        # Set once the challenge's story has played: the next button press
+        # plays the scripted translation rather than a conversation turn.
+        self.awaiting_translation = False
         self.awaiting_mode = True
         # Duration of the last reply audio, so the auto-wrap-up after the
         # final turn waits for its client-side playback to finish.
@@ -272,6 +313,10 @@ class DemoSessionOrchestrator:
 
     async def _status(self, state: str, message: str):
         await self._send("status", state=state, message=message)
+
+    async def _set_stage(self, stage: str, prompt: str):
+        self.stage = stage
+        await self._send("stage", stage=stage, prompt=prompt)
 
     async def run(self):
         try:
@@ -295,14 +340,14 @@ class DemoSessionOrchestrator:
             msg_type = message.get("type")
             if msg_type == "end_session":
                 break
-            elif msg_type in {"start_talk", "start_story"}:
+            elif msg_type in {"start_talk", "start_challenge"}:
                 if not self.awaiting_mode:
                     continue
                 self.awaiting_mode = False
                 if msg_type == "start_talk":
                     await self._start_talk()
                 else:
-                    await self._start_story()
+                    await self._start_challenge()
             elif msg_type in {"user_audio", "simulate_turn"}:
                 if self.mode is None:
                     if msg_type == "user_audio":
@@ -313,6 +358,9 @@ class DemoSessionOrchestrator:
                     continue
                 if msg_type == "user_audio":
                     await self._handle_turn(message)
+                elif self.awaiting_translation:
+                    await self._play_scripted_translation()
+                    continue
                 else:
                     await self._play_scripted_turn(message.get("language", "en"))
                 if self.turn_index >= len(self.manuscript["turns"]):
@@ -350,16 +398,22 @@ class DemoSessionOrchestrator:
         await self._send("mode", mode="talk", session_name=self.session_name)
         await self._status("idle", _PROMPT_TO_SPEAK)
 
-    async def _start_story(self):
+    async def _start_challenge(self):
         if self.mode is not None:
             return
-        self.mode = "story"
+        self.mode = "challenge"
         self._ensure_session_dir()
-        await self._send("mode", mode="story", session_name=self.session_name)
+        await self._send("mode", mode="challenge", session_name=self.session_name)
 
-        await self._status("thinking",
-                           "Fetching today's Wikipedia story and writing your lesson… (this can take a moment)")
+        await self._status(
+            "thinking",
+            "Fetching today's Wikipedia article and building your translation challenge…")
         await asyncio.sleep(self.delays["story_fetch"])
+        for i, label in enumerate(_LESSON_STEPS, start=1):
+            await self._status(
+                "thinking",
+                f"Building today's challenge — {label}… ({i}/{len(_LESSON_STEPS)})")
+            await asyncio.sleep(self.delays["lesson_step"])
 
         story = self.manuscript.get("story")
         if story:
@@ -381,7 +435,21 @@ class DemoSessionOrchestrator:
             await self._send("tts_audio", turn="story")
             await self._wait_for("tts_playback_done")
 
-        await self._status("idle", _PROMPT_TO_SPEAK)
+        # lesson.md holds the answer key, so it stays unlinked until the
+        # translation has been marked — same as the real session.
+        self._write_lesson_file()
+        self.awaiting_translation = True
+        await self._set_stage("translate", _PROMPT_TO_TRANSLATE)
+        await self._status("idle", _PROMPT_TO_TRANSLATE)
+
+    def _write_lesson_file(self):
+        """The recorded session's lesson when there is one, otherwise the story
+        prose under its title — enough for the link to open something real."""
+        markdown = self.manuscript.get("lesson_markdown")
+        if not markdown:
+            story = self.manuscript.get("story") or {}
+            markdown = f"# {story.get('story_title', 'Lesson')}\n\n{story.get('story', '')}\n"
+        (self.session_dir / LESSON_FILENAME).write_text(markdown, encoding="utf-8")
 
     # -- Per-turn conversation ----------------------------------------------
 
@@ -396,7 +464,68 @@ class DemoSessionOrchestrator:
             await self._status("idle", "No speech detected — try again.")
             return
 
+        if self.awaiting_translation:
+            await self._play_scripted_translation(audio_bytes)
+            return
+
         await self._play_scripted_turn(language, audio_bytes)
+
+    async def _play_scripted_translation(self, user_audio_bytes: bytes | None = None):
+        """The challenge's one scripted special turn: the student's spoken
+        English translation, then the marked review."""
+        self.awaiting_translation = False
+        script = self.manuscript.get("translation") or {}
+        student_text = script.get("student", "(no scripted translation)")
+        review_text = script.get("review", "(no scripted review)")
+
+        if user_audio_bytes is None:
+            user_audio_bytes = _placeholder_speech_wav(
+                student_text, "en", pitch_hz=_BASE_PITCH_HZ["en"] * _USER_PITCH_SCALE)
+        audio_path = generate_audio_filename(self.session_dir, "user", "en")
+        Path(audio_path).write_bytes(user_audio_bytes)
+
+        await self._status("thinking", "Transcribing what you said…")
+        user_start = datetime.now()
+        await asyncio.sleep(self.delays["transcribe"])
+        self.responses.append(Response(
+            author="user", language="en", text=student_text,
+            timestamp=datetime.now(), audio_sample=audio_path,
+        ))
+        await self._send(
+            "transcript", author="user", language="en", text=student_text,
+            audio_filename=Path(audio_path).name,
+            processing_ms=int((datetime.now() - user_start).total_seconds() * 1000),
+        )
+
+        await self._status("thinking", "Marking your translation against the story…")
+        review_start = datetime.now()
+        await asyncio.sleep(self.delays["review"])
+        await self._status("thinking", "Synthesizing speech…")
+        await asyncio.sleep(self.delays["synthesize"])
+
+        review_audio_path = generate_audio_filename(self.session_dir, "assistant", "en")
+        review_audio = _placeholder_speech_wav(review_text, "en")
+        Path(review_audio_path).write_bytes(review_audio)
+        self._last_reply_seconds = _wav_duration_seconds(review_audio)
+        self.responses.append(Response(
+            author="assistant", language="en", text=review_text,
+            timestamp=datetime.now(), audio_sample=review_audio_path,
+        ))
+        (self.session_dir / REVIEW_FILENAME).write_text(
+            script.get("review_markdown") or f"# Translation review\n\n{review_text}\n",
+            encoding="utf-8")
+
+        await self._set_stage("converse", _PROMPT_TO_SPEAK)
+        await self._send(
+            "transcript", author="assistant", language="en", text=review_text,
+            audio_filename=Path(review_audio_path).name,
+            processing_ms=int((datetime.now() - review_start).total_seconds() * 1000),
+        )
+        await self._send("tts_audio", turn="reply")
+        await self._send("artifact", filename=LESSON_FILENAME,
+                         label="Open the lesson (story + literal translation)")
+        await self._send("artifact", filename=REVIEW_FILENAME,
+                         label="Open the full translation review")
 
     async def _play_scripted_turn(self, language: str, user_audio_bytes: bytes | None = None):
         """Play the next scripted exchange — user line, then assistant answer
@@ -480,13 +609,18 @@ class DemoSessionOrchestrator:
             homework_path = self.session_dir / "homework.md"
             homework_path.write_text(self.manuscript["homework"], encoding="utf-8")
 
+        artifacts = {
+            key: name for key, name in (("lesson_filename", LESSON_FILENAME),
+                                        ("review_filename", REVIEW_FILENAME))
+            if (self.session_dir / name).is_file()
+        }
         try:
             await self._send(
                 "done",
                 session_name=self.session_name,
                 transcript_filename=transcript_path.name,
                 homework_filename=homework_path.name if homework_path else None,
-                lesson_filename=homework_path.name if homework_path else None,
+                **artifacts,
             )
         except (WebSocketDisconnect, RuntimeError):
             pass

@@ -1,12 +1,18 @@
 {
-  "_comment": "Script for demo mode (web/demo.py), re-read on every connection — edit and refresh the browser. 'session' points at a recorded session folder (relative to the repo root); the demo replays its story.md, transcript.md, homework.md and real WAV audio, and each language button press plays the next recorded exchange. If the folder is missing, the inline 'story'/'turns'/'homework' below are used instead, with placeholder tones. 'delays_seconds' controls how long each fake pipeline phase takes. When the turns run out the session wraps up automatically.",
+  "_comment": "Script for demo mode (web/demo.py), re-read on every connection — edit and refresh the browser. 'session' points at a recorded session folder (relative to the repo root); the demo replays its story.md, transcript.md, homework.md, lesson.md, translation_review.md and real WAV audio, and each language button press plays the next recorded exchange. If the folder is missing, the inline 'story'/'translation'/'turns'/'homework' below are used instead, with placeholder tones. In the translation challenge the first press after the story plays 'translation' (the spoken English, then the marked review) and the rest continue through 'turns'. 'delays_seconds' controls how long each fake pipeline phase takes. When the turns run out the session wraps up automatically.",
   "session": "recordings/2026-07-23_235034",
   "delays_seconds": {
     "story_fetch": 1.5,
+    "lesson_step": 0.25,
     "transcribe": 0.8,
     "generate": 1.1,
+    "review": 2.0,
     "synthesize": 0.4,
     "analysis": 1.5
+  },
+  "translation": {
+    "student": "It was the summer of 1904 in Saint Louis, during the big World's Fair. It made a lot of heat and everybody wanted ice cream. Arnold, a young seller, had a terrible problem: his plates ran out. The people waited in a long line and he didn't know what to do. Next to him, a Syrian man called Ernest sold wafers, some thin crunchy cookies, but nobody bought them with so much heat. Ernest looked at the line, looked at his cookies, and had a brilliant idea: he rolled a wafer into a cone shape and offered it to Arnold.",
+    "review": "You followed the whole story and got the turn of events right — the plates running out, Ernest's idea, the cone. The one pattern worth naming is that the Spanish keeps telling you who did what to whom with small unstressed words, and those are the ones slipping past.\n\nSentence 3 (missed): ¡Se le acabaron los platos!\nYou said: his plates ran out\nThe accidental se construction puts the blame outside the person: literally the plates ran out on him. You got the meaning, but the participant marking is the thing this sentence teaches.\nBetter: he ran out of plates — and note that the Spanish carefully avoids blaming him for it.\n\nWorth checking:\n- Sentence 2: was the heat a background state or a one-off event? Your simple past covers both hacía and hizo.\n\nHolding up well:\n- \"it made a lot of heat\" for hacía muchísimo calor — that is the literal gloss showing, not an error; you clearly parsed hacer as the weather verb.\n- You kept Ernest and Arnold straight through the dialogue, where the dropped subjects make it easy to swap them."
   },
   "story": {
     "article_title": "Ice cream cone",

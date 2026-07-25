@@ -141,6 +141,20 @@ section {
 .msg--user { align-self: flex-end; background: var(--user-bubble); }
 .msg--assistant { align-self: flex-start; background: var(--assistant-bubble); }
 
+/* Links to generated files (the lesson, the written-up review): a chat entry
+   rather than a bubble, so they read as session artifacts and not as speech. */
+.msg--artifact {
+  align-self: center;
+  max-width: 100%;
+  background: none;
+  border: 1px dashed var(--border);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.9rem;
+}
+
+.msg--artifact a { color: var(--accent); text-decoration: none; }
+.msg--artifact a:hover { text-decoration: underline; }
+
 .msg-lang {
   font-size: 0.7rem;
   text-transform: uppercase;

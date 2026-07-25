@@ -36,18 +36,24 @@ MIN_PRE1950_POOL = 3  # below this, fall back to the full day's pool rather than
 # Ollama helpers
 # ---------------------------------------------------------------------------
 
-def chat_completion(messages: list, format: dict | str | None = None, timeout: int = 120) -> str:
+def chat_completion(messages: list, format: dict | str | None = None, timeout: int = 120,
+                    num_ctx: int | None = None) -> str:
     """Low-level Ollama chat call. Returns the assistant's text.
 
     `format` optionally constrains Ollama's output ("json" or a JSON-schema
     dict) — this only guarantees syntactically valid JSON, callers still
     validate the shape themselves.
+
+    `num_ctx` raises the context window above the default for the few callers
+    that need it (the translation review carries several kB of reference
+    material plus the transcript); a larger window costs memory, so it is
+    opt-in rather than the default.
     """
     payload = {
         "model": OLLAMA_MODEL,
         "messages": messages,
         "stream": False,
-        "options": {"num_ctx": OLLAMA_NUM_CTX},
+        "options": {"num_ctx": num_ctx or OLLAMA_NUM_CTX},
     }
     if format is not None:
         payload["format"] = format
@@ -56,11 +62,11 @@ def chat_completion(messages: list, format: dict | str | None = None, timeout: i
     return response.json()["message"]["content"]
 
 
-def chat_completion_json(messages: list, schema: dict) -> dict:
+def chat_completion_json(messages: list, schema: dict, num_ctx: int | None = None) -> dict:
     """chat_completion with a JSON-schema format constraint, parsed and
     retried once on failure. Raises ValueError if both attempts fail."""
     for _ in range(2):
-        raw = chat_completion(messages, format=schema)
+        raw = chat_completion(messages, format=schema, num_ctx=num_ctx)
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
@@ -490,6 +496,43 @@ def record_article_covered(profile: dict, title: str, session_name: str) -> None
         "session": session_name,
     })
     profile["articles_covered"] = profile["articles_covered"][-60:]
+
+
+def record_practice(profile: dict, session_name: str, mode: str, *, focus: str | None = None,
+                    level: str | None = None, topic: str | None = None,
+                    translated: bool = False, spoken_turns: int = 0) -> None:
+    """Append what this session actually practiced to the student's track
+    record, and keep a running tally per grammar focus.
+
+    `weaknesses` says what the student gets wrong; this says what they have
+    worked on, which is the other half of the picture — it is what lets a
+    reader (or a future prompt) see that the subjunctive has been drilled four
+    times and `por`/`para` never.
+    """
+    today = date.today().isoformat()
+    log = profile.setdefault("practice_log", [])
+    log.append({
+        "date": today,
+        "session": session_name,
+        "mode": mode,
+        "focus": focus,
+        "level": level,
+        "topic": topic,
+        "translated": translated,
+        "spoken_turns": spoken_turns,
+    })
+    profile["practice_log"] = log[-60:]
+
+    if focus:
+        practiced = profile.setdefault("focuses_practiced", [])
+        key = focus.casefold()
+        existing = next((f for f in practiced if f.get("focus", "").casefold() == key), None)
+        if existing:
+            existing["times"] = existing.get("times", 0) + 1
+            existing["last_practiced"] = today
+        else:
+            practiced.append({"focus": focus, "times": 1, "last_practiced": today})
+        practiced.sort(key=lambda f: f.get("times", 0), reverse=True)
 
 
 def merge_analysis_into_profile(profile: dict, analysis: dict | None) -> None:
