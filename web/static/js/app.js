@@ -3,6 +3,8 @@
   const avatar = document.getElementById('avatar');
   const statusText = document.getElementById('status-text');
   const landingPanel = document.getElementById('landing-panel');
+  const userPicker = document.getElementById('user-picker');
+  const sessionSetup = document.getElementById('session-setup');
   const chatPanel = document.getElementById('chat-panel');
   const chatLog = document.getElementById('chat-log');
   const controls = document.getElementById('controls');
@@ -26,6 +28,7 @@
   };
 
   let ws = null;
+  let selectedUserId = null;
   let recording = false;
   let currentLanguage = null;
   // The most recent assistant bubble's <audio> element — the single playback
@@ -189,7 +192,7 @@
   outputSelect.addEventListener('change', () => AudioPlayback.setOutputDevice(outputSelect.value));
 
   function connect() {
-    ws = new WebSocket(`ws://${location.host}/ws/session`);
+    ws = new WebSocket(`ws://${location.host}/ws/session?user=${encodeURIComponent(selectedUserId)}`);
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
@@ -436,6 +439,22 @@
     ws.send(buffer);
   }
 
+  document.querySelectorAll('.user-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      selectedUserId = btn.dataset.user;
+      localStorage.setItem('lastUser', selectedUserId);
+      userPicker.hidden = true;
+      sessionSetup.hidden = false;
+      connect();
+    });
+  });
+
+  const lastUser = localStorage.getItem('lastUser');
+  if (lastUser) {
+    const lastBtn = document.querySelector(`.user-btn[data-user="${lastUser}"]`);
+    if (lastBtn) lastBtn.classList.add('last-used');
+  }
+
   btnTalk.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -456,5 +475,4 @@
   });
 
   updateLandingState();
-  connect();
 })();

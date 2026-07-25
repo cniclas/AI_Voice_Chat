@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from session_core import RECORDINGS_ROOT
+from users import get_user
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -96,7 +97,7 @@ def create_app(demo: bool = False) -> FastAPI:
     async def index():
         return FileResponse(str(STATIC_DIR / "index.html"))
 
-    @app.get("/session/{session_name}/{filename}")
+    @app.get("/session/{session_name:path}/{filename}")
     async def session_file(session_name: str, filename: str):
         """Serve a generated session artifact (transcript.md, homework.md, ...)."""
         recordings_root = Path(RECORDINGS_ROOT).resolve()
@@ -107,11 +108,15 @@ def create_app(demo: bool = False) -> FastAPI:
 
     @app.websocket("/ws/session")
     async def ws_session(ws: WebSocket):
+        user = get_user(ws.query_params.get("user", ""))
+        if user is None:
+            await ws.close(code=1008)
+            return
         # Accept the websocket and run the session orchestrator. Any unexpected
         # exception should be caught and reported back to the client instead of
         # letting the socket drop silently.
         await ws.accept()
-        orchestrator = Orchestrator(ws, app.state, app.state.whisper_lock)
+        orchestrator = Orchestrator(ws, app.state, app.state.whisper_lock, user)
         try:
             await orchestrator.run()
         except WebSocketDisconnect:

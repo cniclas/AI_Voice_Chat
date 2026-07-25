@@ -3,11 +3,11 @@
 Takes findings in the same JSON shape `curriculum.analyze_weaknesses()` produces
 and merges them via `curriculum.merge_analysis_into_profile()`, so a weakness
 found by reading counts toward the same `occurrences` tally as one found by
-speaking. Hand-editing recordings/student_profile.json instead would silently
-diverge from how the session pipeline counts things.
+speaking. Hand-editing recordings/<user>/student_profile.json instead would
+silently diverge from how the session pipeline counts things.
 
-    uv run python .claude/skills/translation-review/scripts/record_review.py review.json
-    uv run python .claude/skills/translation-review/scripts/record_review.py review.json --dry-run
+    uv run python .claude/skills/translation-review/scripts/record_review.py review.json --user niclas
+    uv run python .claude/skills/translation-review/scripts/record_review.py review.json --user niclas --dry-run
 
 Expected JSON:
 
@@ -92,11 +92,17 @@ def _describe_changes(before: dict, after: dict) -> list[str]:
 
 
 def main() -> int:
+    sys.path.insert(0, str(_repo_root()))
+    from users import USERS, get_user  # noqa: E402
+
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("review", type=Path, help="Path to the review JSON.")
+    parser.add_argument("--user", required=True, choices=sorted(USERS),
+                        help="Which student's profile to update.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report what would change without writing the profile.")
     args = parser.parse_args()
+    user = get_user(args.user)
 
     if not args.review.exists():
         raise SystemExit(f"No such file: {args.review}")
@@ -114,10 +120,9 @@ def main() -> int:
         print("Nothing to record -- no weaknesses and no vocabulary in this review.")
         return 0
 
-    sys.path.insert(0, str(_repo_root()))
     from curriculum import load_profile, merge_analysis_into_profile, save_profile  # noqa: E402
 
-    profile = load_profile()
+    profile = load_profile(user.profile_path)
     before = json.loads(json.dumps(profile))  # deep copy for the diff
     merge_analysis_into_profile(profile, review)
 
@@ -127,7 +132,7 @@ def main() -> int:
         print("\n".join(changes) if changes else "  (none)")
         return 0
 
-    save_profile(profile)
+    save_profile(profile, user.profile_path)
     print("Recorded in the student profile:")
     print("\n".join(changes) if changes else "  (no new entries; existing ones refreshed)")
     return 0

@@ -27,6 +27,10 @@ speech, and it is not a finding.
 
 ## Inputs
 
+Before any of these: confirm which student the translation is from — Niclas or
+Alejandra — if that isn't already clear from the conversation. It decides whose
+profile gets updated in Step 5 and where the review gets saved.
+
 | Input | Notes |
 |---|---|
 | **The spoken translation** | A transcript, or a WAV to transcribe with `scripts/transcribe.py`. Required. |
@@ -153,7 +157,7 @@ Order findings by what will help most, not by sentence number. If one
 misunderstanding recurs across sentences, treat it as a single finding with
 several pieces of evidence — that is one thing to learn, not four.
 
-Save alongside the lesson: `lessons/<lesson-slug>-review-<YYYY-MM-DD>.md`.
+Save alongside the lesson: `lessons/<user>/<lesson-slug>-review-<YYYY-MM-DD>.md`.
 
 ## Step 5 — record it in the student profile
 
@@ -162,12 +166,13 @@ tomorrow's story weaves in what today's translation exposed. Write the findings
 as JSON in the shape `curriculum.analyze_weaknesses()` produces, then:
 
 ```bash
-uv run python .claude/skills/translation-review/scripts/record_review.py review.json
+uv run python .claude/skills/translation-review/scripts/record_review.py review.json --user niclas
 ```
 
 The script reuses `curriculum.merge_analysis_into_profile()` rather than editing
 the JSON by hand, so recurring weaknesses accumulate `occurrences` exactly the
-way the session pipeline counts them. Pass `--dry-run` to see the effect first.
+way the session pipeline counts them. `--user` picks which student's profile
+gets updated — `niclas` or `alejandra`. Pass `--dry-run` to see the effect first.
 Tell the user in one line what got recorded — this is shared state the rest of
 the app reads.
 

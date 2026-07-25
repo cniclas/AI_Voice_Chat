@@ -290,8 +290,11 @@ class DemoSessionOrchestrator:
     """Same constructor signature and run() contract as SessionOrchestrator,
     so web/server.py can swap one for the other."""
 
-    def __init__(self, ws: WebSocket, app_state, whisper_lock: asyncio.Lock):
+    def __init__(self, ws: WebSocket, app_state, whisper_lock: asyncio.Lock, user):
         self.ws = ws
+        # Accepted only for constructor-signature parity with SessionOrchestrator;
+        # demo mode keeps its existing hardcoded recordings/demo folder behavior.
+        self.user = user
         self.manuscript = _load_manuscript()
         self.delays = self.manuscript["delays_seconds"]
         self.session_dir: Path | None = None

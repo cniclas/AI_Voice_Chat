@@ -2,13 +2,10 @@
 weakness analysis, homework, and the persistent student profile."""
 
 import json
-import os
 from datetime import date
 from pathlib import Path
 
 import requests
-
-_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 OLLAMA_MODEL = "llama3.1:8b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
@@ -21,8 +18,6 @@ WIKI_HEADERS = {
     "Accept": "application/json",
 }
 WIKI_TIMEOUT = 15
-
-PROFILE_PATH = Path(_ROOT) / "recordings" / "student_profile.json"
 
 MAX_CANDIDATES = 10  # candidates offered to the selection LLM
 ARTICLE_EXTRACT_CHARS = 3000  # plaintext extract fed to story generation
@@ -455,26 +450,26 @@ def _empty_profile() -> dict:
     }
 
 
-def load_profile() -> dict:
+def load_profile(profile_path: Path) -> dict:
     """Missing file → fresh default. Corrupt JSON → rename to .bak, warn,
     return fresh default. Never raises."""
-    if not PROFILE_PATH.exists():
+    if not profile_path.exists():
         return _empty_profile()
     try:
-        return json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+        return json.loads(profile_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
-        backup = PROFILE_PATH.with_suffix(".json.bak")
+        backup = profile_path.with_suffix(".json.bak")
         try:
-            PROFILE_PATH.rename(backup)
+            profile_path.rename(backup)
         except OSError:
             pass
         print(f"Warning: student profile was corrupt ({e}); starting fresh. Backed up to {backup}.")
         return _empty_profile()
 
 
-def save_profile(profile: dict) -> None:
-    PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
+def save_profile(profile: dict, profile_path: Path) -> None:
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def bump_vocab_targeted(profile: dict, words: list[str]) -> None:

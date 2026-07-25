@@ -105,10 +105,10 @@ def transcribe_audio(audio_path: str, model, language: str = "en") -> str:
     return result["text"].strip()
 
 
-def create_session_dir() -> Path:
+def create_session_dir(recordings_dir: Path) -> Path:
     """Create a new date/time-named folder for this conversation."""
     name = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    session_dir = Path(RECORDINGS_ROOT) / name
+    session_dir = Path(recordings_dir) / name
     session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir
 

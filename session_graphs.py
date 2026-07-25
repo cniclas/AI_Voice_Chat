@@ -32,6 +32,7 @@ from langgraph.graph import StateGraph, START, END
 
 import curriculum
 import translation_challenge
+import users
 
 # Candidate extracts are enriched to this length before article selection —
 # richer summaries improve the LLM's pick at the cost of one extra HTTP call
@@ -41,6 +42,7 @@ CANDIDATE_SUMMARY_CHARS = 800
 
 class SessionState(TypedDict, total=False):
     session_dir: str            # str (not Path) so the state stays serializable
+    user_id: str
     mode: str                   # "story" (default) or "challenge"
     profile: dict
     candidates: list
@@ -63,7 +65,8 @@ class SessionState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 
 def load_profile_node(state: SessionState) -> dict:
-    return {"profile": curriculum.load_profile()}
+    user = users.get_user(state["user_id"])
+    return {"profile": curriculum.load_profile(user.profile_path)}
 
 
 def fetch_onthisday_feed_node(state: SessionState) -> dict:
@@ -164,7 +167,8 @@ def record_article_covered_node(state: SessionState) -> dict:
     session_name = Path(state["session_dir"]).name
     curriculum.record_article_covered(profile, state["article"]["title"], session_name)
     curriculum.bump_vocab_targeted(profile, state.get("practice_words", []))
-    curriculum.save_profile(profile)
+    user = users.get_user(state["user_id"])
+    curriculum.save_profile(profile, user.profile_path)
     return {"profile": profile}
 
 
@@ -251,7 +255,8 @@ def generate_homework_node(state: SessionState) -> dict:
 def update_student_profile_node(state: SessionState) -> dict:
     profile = state["profile"]
     curriculum.merge_analysis_into_profile(profile, state.get("analysis"))
-    curriculum.save_profile(profile)
+    user = users.get_user(state["user_id"])
+    curriculum.save_profile(profile, user.profile_path)
     return {"profile": profile}
 
 
@@ -273,7 +278,8 @@ def record_practice_node(state: SessionState) -> dict:
         translated=state.get("review") is not None,
         spoken_turns=state.get("spoken_turns", 0),
     )
-    curriculum.save_profile(profile)
+    user = users.get_user(state["user_id"])
+    curriculum.save_profile(profile, user.profile_path)
     return {"profile": profile}
 
 
