@@ -69,14 +69,16 @@ is meaningful. Put the one that matters most first.
 
 ## A focus goal has to name a canonical focus
 
-`focus` must match one of the `###` headings under `## Focus patterns` in
-`.claude/skills/language-lesson/references/languages/es.md` — the same names
-`skill_refs.focus_names()` enumerates:
+`focus` must match one of the `###` headings under `## Focus patterns` in the
+student's **target-language** file,
+`.claude/skills/language-lesson/references/languages/<target>.md` — the same
+names `skill_refs.focus_names(target)` enumerates. Read them out of the file
+rather than from memory; they differ per language and the list here would go
+stale:
 
-> Past tenses — pretérito vs imperfecto · Future and conditional · Conditionals
-> and si-clauses · Present subjunctive · Imperfect subjunctive · Ser vs estar ·
-> Por vs para · Object pronouns and clitics · Reflexives and the many uses of
-> `se` · Commands and the imperative
+```bash
+uv run python -c "import skill_refs, users; u=users.get_user('<user>'); print(*skill_refs.focus_names(u.target_lang), sep='\n')"
+```
 
 Matching is exact (after accent- and case-folding), because a goal is an explicit
 instruction and guessing at a near-miss would be worse than ignoring it. A goal
@@ -85,8 +87,9 @@ picker and nothing visible goes wrong, which is exactly why `record_goals.py`
 rejects it up front.
 
 If the thing the student needs isn't in that list, the honest move is to add a
-focus pattern to `es.md` — the language-lesson skill documents how, and the app
-reads that file at runtime, so a new pattern works with no code change.
+focus pattern to that language file — the language-lesson skill documents how,
+and the app reads the file at runtime, so a new pattern works with no code
+change.
 
 ### Bind the goal to its weakness topics
 

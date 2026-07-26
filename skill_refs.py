@@ -5,14 +5,22 @@ written for Claude, but the browser's translation-challenge mode has to do the
 same two jobs against the local Ollama model. Rather than paraphrasing those
 documents into a second set of prompts that quietly drifts out of date, this
 module pulls the exact sections the skills tell a reader to consult — the CEFR
-band for the level, the Spanish forms allowed at that level, the focus pattern
-being drilled, the glossing notation, the judging filters — and
+band for the level, the forms the target language allows at that level, the
+focus pattern being drilled, the glossing notation, the judging filters — and
 `translation_challenge.py` pastes them into the Ollama prompts.
 
-The skill files stay the single source of truth: editing `references/languages/
-es.md` changes what the app generates, with no code change. Only whole
-sections are pulled, because a small model degrades quickly if handed 10 kB of
-prose it mostly doesn't need.
+Two axes decide which file is read. The **target** language alone determines
+its form inventory, focus patterns and glossing notes
+(`language-lesson/references/languages/<target>.md`). The **pair** determines
+what a reader of one language misreads in the other, which is directional and
+so lives in `translation-review/references/languages/<target>-<native>.md` —
+the traps a Spanish speaker falls into reading French are not the ones an
+English speaker falls into reading Spanish.
+
+The skill files stay the single source of truth: editing
+`references/languages/fr.md` changes what the app generates, with no code
+change. Only whole sections are pulled, because a small model degrades quickly
+if handed 10 kB of prose it mostly doesn't need.
 
 Everything degrades to an empty string if a file or section is missing, so the
 pipeline still runs (with weaker prompts) on a checkout without the skills.
@@ -25,6 +33,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import curriculum
+import languages
 
 _ROOT = Path(__file__).resolve().parent
 SKILLS_ROOT = _ROOT / ".claude" / "skills"
@@ -32,8 +41,7 @@ SKILLS_ROOT = _ROOT / ".claude" / "skills"
 LESSON_SKILL = SKILLS_ROOT / "language-lesson"
 REVIEW_SKILL = SKILLS_ROOT / "translation-review"
 
-DEFAULT_LEVEL = "B1"
-DEFAULT_FOCUS = "Past tenses — pretérito vs imperfecto"
+DEFAULT_LEVEL = curriculum.DEFAULT_LEVEL
 
 # Judging sections worth spending prompt budget on: the filters that decide
 # whether a deviation is a finding at all. The narrative framing around them is
@@ -143,36 +151,48 @@ def level_band(level: str = DEFAULT_LEVEL) -> str:
     return _section_body(LESSON_SKILL / "references" / "levels.md", level)
 
 
-def language_forms(level: str = DEFAULT_LEVEL, lang: str = "es") -> str:
+def _target_file(target: str) -> Path:
+    return LESSON_SKILL / "references" / "languages" / f"{target}.md"
+
+
+def _pair_file(target: str, native: str) -> Path:
+    return REVIEW_SKILL / "references" / "languages" / f"{target}-{native}.md"
+
+
+def language_forms(level: str, target: str) -> str:
     """The forms that level admits in one language — and, just as importantly,
     the "out" list, since level drift happens by importing from the row below."""
-    return _section_body(
-        LESSON_SKILL / "references" / "languages" / f"{lang}.md",
-        level, parent="Form inventory")
+    return _section_body(_target_file(target), level, parent="Form inventory")
 
 
-def focus_names(lang: str = "es") -> list[str]:
+def focus_names(target: str) -> list[str]:
     """Every grammar focus the language file documents a pattern for."""
-    return _child_titles(
-        LESSON_SKILL / "references" / "languages" / f"{lang}.md", "Focus patterns")
+    return _child_titles(_target_file(target), "Focus patterns")
 
 
-def focus_pattern(focus: str, lang: str = "es") -> str:
-    """What the story must do structurally for this focus, the mistake an
-    English speaker reliably makes, and how to gloss it."""
-    return _section_body(
-        LESSON_SKILL / "references" / "languages" / f"{lang}.md",
-        focus, parent="Focus patterns")
+def focus_pattern(focus: str, target: str) -> str:
+    """What the story must do structurally for this focus, the mistake a
+    learner reliably makes, and how to gloss it."""
+    return _section_body(_target_file(target), focus, parent="Focus patterns")
 
 
-def glossing_notes(lang: str = "es") -> str:
-    """Language-specific glossing quirks — dropped subjects, clitic order,
-    idioms that must stay literal."""
-    return _section_body(
-        LESSON_SKILL / "references" / "languages" / f"{lang}.md", "Glossing notes")
+def glossing_notes(target: str, native: str) -> str:
+    """Glossing quirks — dropped subjects, clitic order, idioms that must stay
+    literal — plus the worked examples for glossing into this native language.
+
+    A gloss is directional even though the file is per-target: the same French
+    partitive needs saying one way to a Spanish reader and another way to an
+    English one. So the shared body is returned together with the
+    `### Into <native>` subsection, when the file documents that native
+    language.
+    """
+    path = _target_file(target)
+    shared = _section_body(path, "Glossing notes")
+    into = _section_body(path, f"Into {languages.name(native)}", parent="Glossing notes")
+    return "\n\n".join(part for part in (shared, into) if part)
 
 
-def pick_focus(profile: dict, lang: str = "es") -> str:
+def pick_focus(profile: dict, target: str) -> str:
     """Choose the grammar focus for today's lesson from the student's profile.
 
     An active focus goal wins outright: the student (with the progress-review
@@ -186,12 +206,15 @@ def pick_focus(profile: dict, lang: str = "es") -> str:
     weakness from the student profile"; matching is done here rather than by the
     LLM so the same profile always yields the same focus. Weakness topics are
     free text written by an earlier analysis pass ("preterite vs imperfect"), so
-    tokens are compared by stem — enough to bridge English/Spanish spellings of
-    the same grammatical term without pulling in a stemmer.
+    tokens are compared by stem — enough to bridge the English and target-language
+    spellings of the same grammatical term without pulling in a stemmer.
+
+    Returns "" when the target language has no reference file yet, so the caller
+    omits the focus block rather than drilling a pattern from another language.
     """
-    names = focus_names(lang)
+    names = focus_names(target)
     if not names:
-        return DEFAULT_FOCUS
+        return ""
 
     goal = curriculum.goal_focus(profile)
     if goal:
@@ -219,8 +242,8 @@ def pick_focus(profile: dict, lang: str = "es") -> str:
         if best:
             return best
 
-    # No profile signal yet: B1 narration lives or dies on the aspect contrast,
-    # which is also what the session pipeline's stories already lean on.
+    # No profile signal yet: take the language file's first focus, which is
+    # written to be the one narration at this level lives or dies on.
     return names[0]
 
 
@@ -236,12 +259,15 @@ def judging_rules() -> str:
     return "\n\n".join(f"## {title}\n{body}" for title, body in parts if body)
 
 
-def comprehension_traps(lang: str = "es") -> str:
-    """The trap catalogue for reading one language into English — false
-    friends, clitic misreadings, mood and aspect flattening."""
-    path = REVIEW_SKILL / "references" / "languages" / f"{lang}.md"
+def comprehension_traps(target: str, native: str) -> str:
+    """The trap catalogue for reading one language into another — false
+    friends, clitic misreadings, mood and aspect flattening. Directional: what
+    trips up a native speaker of `native` reading `target`."""
+    path = _pair_file(target, native)
     parts = [
         (s.title, s.body) for s in _sections(str(path))
-        if s.level == 2 and not _normalize(s.title).startswith("adding another language")
+        # "Adding another pair" is instruction for whoever writes the next pair
+        # file, not material for marking today's translation.
+        if s.level == 2 and not _normalize(s.title).startswith("adding another")
     ]
     return "\n\n".join(f"## {title}\n{body}" for title, body in parts if body)

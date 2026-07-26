@@ -7,6 +7,8 @@ from pathlib import Path
 
 import requests
 
+import languages
+
 OLLAMA_MODEL = "llama3.1:8b"
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_NUM_CTX = 8192  # default 2048 would overflow once article+story context is added
@@ -19,9 +21,15 @@ WIKI_HEADERS = {
 }
 WIKI_TIMEOUT = 15
 
+DEFAULT_LEVEL = "B1"  # what a profile that has never been levelled is assumed to be
+
 MAX_CANDIDATES = 10  # candidates offered to the selection LLM
 ARTICLE_EXTRACT_CHARS = 3000  # plaintext extract fed to story generation
-STORY_WORDS = "entre 150 y 200 palabras"
+STORY_WORDS = "between 150 and 200 words"
+
+# Source material is always English Wikipedia regardless of the pair being
+# taught: it has by far the richest "on this day" feed, and the extract is only
+# ever raw material — the story itself is generated in the target language.
 
 PRE1950_YEAR_CUTOFF = 1950  # bias story topics toward older historical events
 MIN_PRE1950_POOL = 3  # below this, fall back to the full day's pool rather than starve selection
@@ -161,8 +169,8 @@ def fetch_article_extract(title: str, fallback_extract: str = "", max_chars: int
 # Prompts — article selection
 # ---------------------------------------------------------------------------
 
-SELECTION_SYSTEM_PROMPT = (
-    "You are choosing a topic for a Spanish-language learning story. "
+SELECTION_SYSTEM_PROMPT_TEMPLATE = (
+    "You are choosing a topic for a {target_name}-language learning story. "
     "You will be given a numbered list of historical events that happened on "
     "this day, each linked to a Wikipedia topic. "
     "Pick the ONE that would make the most engaging short story for a language "
@@ -197,7 +205,7 @@ def _recent_titles(profile: dict, n: int = 15) -> list[str]:
     return [a["title"] for a in profile.get("articles_covered", [])[-n:]]
 
 
-def select_article(candidates: list[dict], profile: dict) -> dict:
+def select_article(candidates: list[dict], profile: dict, target: str) -> dict:
     """Pick the most story-friendly candidate. Falls back to candidates[0]
     on any parse/range failure."""
     covered = {t.casefold() for t in _recent_titles(profile, n=1000)}
@@ -210,7 +218,8 @@ def select_article(candidates: list[dict], profile: dict) -> dict:
     recent = ", ".join(_recent_titles(profile)) or "(none)"
 
     messages = [
-        {"role": "system", "content": SELECTION_SYSTEM_PROMPT},
+        {"role": "system", "content": SELECTION_SYSTEM_PROMPT_TEMPLATE.format(
+            target_name=languages.name(target))},
         {"role": "user", "content": SELECTION_USER_TEMPLATE.format(
             numbered_candidates=numbered, recent_titles=recent)},
     ]
@@ -231,24 +240,25 @@ def select_article(candidates: list[dict], profile: dict) -> dict:
 # Prompts — story generation
 # ---------------------------------------------------------------------------
 
-STORY_GEN_SYSTEM_PROMPT = (
-    "Eres un escritor de cuentos cortos para estudiantes de español de nivel "
-    "intermedio (B1). Escribes en español claro y natural: frases cortas, "
-    "vocabulario común, tiempos verbales sencillos (presente, pretérito, "
-    "imperfecto). El cuento se leerá EN VOZ ALTA por un sintetizador de voz, "
-    "así que: sin títulos de sección, sin listas, sin paréntesis, sin comillas "
-    "raras, sin caracteres especiales; solo párrafos de prosa. "
-    "Responde únicamente con JSON."
+STORY_GEN_SYSTEM_PROMPT_TEMPLATE = (
+    "You write short stories for {level} learners of {target_name}. Write in "
+    "clear, natural {target_name}: short sentences, common vocabulary, and only "
+    "the verb forms a {level} reader can handle. The story is read ALOUD by a "
+    "speech synthesizer, so: no section headings, no lists, no parentheses, no "
+    "unusual quotation marks, no digits or special characters — plain prose "
+    "paragraphs only, spell numbers out. "
+    "Write the story and its title in {target_name}, not in {native_name}. "
+    "Respond with JSON only."
 )
 
 STORY_GEN_USER_TEMPLATE = (
-    "Escribe un cuento corto semi-ficticio ({story_words}) inspirado en este "
-    "artículo de Wikipedia. Puede inventar personajes y detalles, pero debe "
-    "reflejar el tema real del artículo.\n\n"
-    "Artículo: {article_title}\n{article_extract}\n\n"
+    "Write a semi-fictional short story ({story_words}) in {target_name}, "
+    "inspired by this Wikipedia article. You may invent characters and detail, "
+    "but the real subject of the article must stay recognizable.\n\n"
+    "Article: {article_title}\n{article_extract}\n\n"
     "{vocab_instruction}"
-    'Devuelve JSON: {{"title": "<título corto en español>", '
-    '"story": "<el cuento completo en español>"}}'
+    'Return JSON: {{"title": "<short title in {target_name}>", '
+    '"story": "<the whole story in {target_name}>"}}'
 )
 
 STORY_SCHEMA = {
@@ -335,17 +345,24 @@ def top_vocab_to_practice(profile: dict, n: int = 5) -> list[str]:
     return chosen
 
 
-def generate_story(article_title: str, article_extract: str, profile: dict) -> dict:
+def generate_story(article_title: str, article_extract: str, profile: dict,
+                   target: str, native: str) -> dict:
     """Returns {"title": str, "story": str}. Raises upward on failure."""
     vocab = top_vocab_to_practice(profile)
+    target_name = languages.name(target)
     vocab_instruction = (
-        f"Incorpora de forma natural estas palabras que el estudiante necesita "
-        f"practicar: {', '.join(vocab)}.\n\n" if vocab else ""
+        f"Work these words the student needs to practice naturally into the "
+        f"story: {', '.join(vocab)}.\n\n" if vocab else ""
     )
     messages = [
-        {"role": "system", "content": STORY_GEN_SYSTEM_PROMPT},
+        {"role": "system", "content": STORY_GEN_SYSTEM_PROMPT_TEMPLATE.format(
+            target_name=target_name,
+            native_name=languages.name(native),
+            level=profile.get("level") or DEFAULT_LEVEL,
+        )},
         {"role": "user", "content": STORY_GEN_USER_TEMPLATE.format(
             story_words=STORY_WORDS,
+            target_name=target_name,
             article_title=article_title,
             article_extract=article_extract,
             vocab_instruction=vocab_instruction,
@@ -358,24 +375,25 @@ def generate_story(article_title: str, article_extract: str, profile: dict) -> d
 # Prompts — weakness analysis
 # ---------------------------------------------------------------------------
 
-ANALYSIS_SYSTEM_PROMPT = (
-    "You are an expert Spanish teacher analyzing a transcript of a spoken "
+ANALYSIS_SYSTEM_PROMPT_TEMPLATE = (
+    "You are an expert {target_name} teacher analyzing a transcript of a spoken "
     "conversation between a student and a tutor. Identify the student's "
     "concrete weaknesses. Only analyze the Student's turns, and only turns "
-    "marked (es); ignore the Tutor's language. Be specific: quote the "
+    "marked ({target}); ignore the Tutor's language, and ignore turns the "
+    "student spoke in their native {native_name}. Be specific: quote the "
     "student's actual words as evidence. Respond with JSON only."
 )
 
 ANALYSIS_USER_TEMPLATE = (
     "Transcript:\n\n{transcript}\n\n"
     "Return JSON matching this shape:\n"
-    '{{"summary": "<2-3 sentence English summary of the student\'s performance>",\n'
+    '{{"summary": "<2-3 sentence summary of the student\'s performance, in {native_name}>",\n'
     ' "weaknesses": [{{"type": "grammar|vocabulary|expression",\n'
-    '   "topic": "<short label, e.g. \'preterite vs imperfect\'>",\n'
+    '   "topic": "<short label in English, e.g. \'preterite vs imperfect\'>",\n'
     '   "evidence": "<the student\'s exact words>",\n'
-    '   "correction": "<corrected Spanish>",\n'
-    '   "explanation": "<one sentence in English>"}}],\n'
-    ' "vocab_to_practice": ["<Spanish words/expressions the student lacked or misused>"]}}\n'
+    '   "correction": "<corrected {target_name}>",\n'
+    '   "explanation": "<one sentence in {native_name}>"}}],\n'
+    ' "vocab_to_practice": ["<{target_name} words/expressions the student lacked or misused>"]}}\n'
     "Limit weaknesses to the 5 most important. If the student made no notable "
     "errors, return empty lists and say so in the summary."
 )
@@ -404,10 +422,16 @@ ANALYSIS_SCHEMA = {
 }
 
 
-def analyze_weaknesses(transcript_text: str) -> dict:
+def analyze_weaknesses(transcript_text: str, target: str, native: str) -> dict:
+    names = {
+        "target": target,
+        "target_name": languages.name(target),
+        "native_name": languages.name(native),
+    }
     messages = [
-        {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
-        {"role": "user", "content": ANALYSIS_USER_TEMPLATE.format(transcript=transcript_text)},
+        {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT_TEMPLATE.format(**names)},
+        {"role": "user", "content": ANALYSIS_USER_TEMPLATE.format(
+            transcript=transcript_text, **names)},
     ]
     return chat_completion_json(messages, ANALYSIS_SCHEMA)
 
@@ -416,10 +440,11 @@ def analyze_weaknesses(transcript_text: str) -> dict:
 # Prompts — homework generation
 # ---------------------------------------------------------------------------
 
-HOMEWORK_SYSTEM_PROMPT = (
-    "You are an expert Spanish teacher writing a short, targeted homework "
-    "assignment in Markdown. Explanations in English; all Spanish examples in "
-    "Spanish. Keep it focused and doable in 20-30 minutes."
+HOMEWORK_SYSTEM_PROMPT_TEMPLATE = (
+    "You are an expert {target_name} teacher writing a short, targeted homework "
+    "assignment in Markdown. Write the explanations in {native_name}, the "
+    "student's native language; keep all {target_name} examples in "
+    "{target_name}. Keep it focused and doable in 20-30 minutes."
 )
 
 HOMEWORK_USER_TEMPLATE = (
@@ -432,22 +457,23 @@ HOMEWORK_USER_TEMPLATE = (
     "2. **Exercises** — 4-6 exercises targeting exactly those weaknesses and "
     "the vocab_to_practice words. Where possible, set the exercises in the "
     "world of today's story topic.\n"
-    "3. **Vocabulary list** — the practice words with English glosses and one "
-    "example sentence each.\n"
+    "3. **Vocabulary list** — the practice words with {native_name} glosses and "
+    "one example sentence each.\n"
 )
 
 HOMEWORK_FALLBACK_USER_TEMPLATE = (
     "Here is the conversation transcript:\n\n{transcript}\n\n"
     "Recurring weaknesses from previous sessions:\n{recurring}\n\n"
     "Today's story topic: {topic}\n\n"
-    "Write a Spanish homework assignment in Markdown based on the student's "
-    "turns. Include:\n"
+    "Write a {target_name} homework assignment in Markdown based on the "
+    "student's turns. Include:\n"
     "1. A short summary of what the conversation was about.\n"
     "2. The main grammar and vocabulary mistakes the student made, each with "
-    "the correction and a brief explanation in English.\n"
+    "the correction and a brief explanation in {native_name}.\n"
     "3. Useful vocabulary or expressions the student could have used.\n"
     "4. 3-5 practice exercises targeting the student's weaknesses.\n\n"
-    "Write explanations in English, but keep all Spanish examples in Spanish."
+    "Write explanations in {native_name}, but keep all {target_name} examples "
+    "in {target_name}."
 )
 
 
@@ -469,27 +495,34 @@ def _format_recurring(recurring: list[dict]) -> str:
 
 
 def generate_homework(analysis: dict | None, transcript_text: str,
-                       story_title: str | None, recurring: list[dict]) -> str:
+                       story_title: str | None, recurring: list[dict],
+                       target: str, native: str) -> str:
     """Returns Markdown homework text. Uses the structured analysis when
     available, falling back to the raw transcript if analysis is None."""
     topic = story_title if story_title else "(no story this session)"
     recurring_text = _format_recurring(recurring)
+    names = {
+        "target_name": languages.name(target),
+        "native_name": languages.name(native),
+    }
 
     if analysis is not None:
         user_prompt = HOMEWORK_USER_TEMPLATE.format(
             analysis_json=json.dumps(analysis, indent=2, ensure_ascii=False),
             recurring=recurring_text,
             topic=topic,
+            **names,
         )
     else:
         user_prompt = HOMEWORK_FALLBACK_USER_TEMPLATE.format(
             transcript=transcript_text,
             recurring=recurring_text,
             topic=topic,
+            **names,
         )
 
     messages = [
-        {"role": "system", "content": HOMEWORK_SYSTEM_PROMPT},
+        {"role": "system", "content": HOMEWORK_SYSTEM_PROMPT_TEMPLATE.format(**names)},
         {"role": "user", "content": user_prompt},
     ]
     return chat_completion(messages)
@@ -506,10 +539,12 @@ def save_session_doc(session_dir: Path, filename: str, title: str, body: str) ->
 # Student profile persistence
 # ---------------------------------------------------------------------------
 
-def _empty_profile() -> dict:
+def _empty_profile(target: str | None = None, native: str | None = None) -> dict:
     return {
         "version": 1,
-        "level": "B1",
+        "level": DEFAULT_LEVEL,
+        "target_lang": target,
+        "native_lang": native,
         "articles_covered": [],
         "weaknesses": [],
         "vocab_to_practice": [],
@@ -517,13 +552,22 @@ def _empty_profile() -> dict:
     }
 
 
-def load_profile(profile_path: Path) -> dict:
+def load_profile(profile_path: Path, target: str | None = None,
+                 native: str | None = None) -> dict:
     """Missing file → fresh default. Corrupt JSON → rename to .bak, warn,
-    return fresh default. Never raises."""
+    return fresh default. Never raises.
+
+    When `target` is given and the stored profile was built for a different
+    target language, the old file is set aside as `student_profile_<lang>.json`
+    and a fresh profile is returned. Everything in a profile — weaknesses,
+    level, vocabulary, goals naming that language's focus patterns — is about
+    one language, and `merge_analysis_into_profile()` would otherwise blend two
+    of them into a single tally that describes neither.
+    """
     if not profile_path.exists():
-        return _empty_profile()
+        return _empty_profile(target, native)
     try:
-        return json.loads(profile_path.read_text(encoding="utf-8"))
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         backup = profile_path.with_suffix(".json.bak")
         try:
@@ -531,7 +575,30 @@ def load_profile(profile_path: Path) -> dict:
         except OSError:
             pass
         print(f"Warning: student profile was corrupt ({e}); starting fresh. Backed up to {backup}.")
-        return _empty_profile()
+        return _empty_profile(target, native)
+
+    if target is None:
+        return profile
+
+    stored = profile.get("target_lang")
+    if stored is None:
+        # Profiles written before this key existed are Spanish by construction —
+        # that is the only language the app taught. Stamping rather than
+        # archiving keeps Niclas's history intact.
+        profile["target_lang"] = target
+        profile.setdefault("native_lang", native)
+        return profile
+    if stored == target:
+        return profile
+
+    archived = profile_path.with_name(f"{profile_path.stem}_{stored}.json")
+    try:
+        profile_path.rename(archived)
+        print(f"Note: this profile was for {stored}; set aside as {archived.name}, "
+              f"starting a fresh {target} profile.")
+    except OSError as e:
+        print(f"Warning: could not archive the {stored} profile ({e}); starting fresh anyway.")
+    return _empty_profile(target, native)
 
 
 def save_profile(profile: dict, profile_path: Path) -> None:

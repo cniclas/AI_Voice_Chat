@@ -7,18 +7,19 @@ What they deliberately do not say is which grammatical forms belong at each
 level — that mapping is language-specific and lives in
 `references/languages/<code>.md`. The division matters: "can narrate past events
 with some texture" is a fact about B1 readers everywhere, while the forms that
-deliver it are the Spanish imperfect, the German Präteritum, or the Japanese
-だった, and each language draws its own line about which of those arrives when.
+deliver it are one language's imperfect, another's compound past, another's
+aspect particle — and each language draws its own line about which of those
+arrives when.
 
 Read the band for the requested level, then read the same level's row in the
 language file to turn it into forms.
 
 ## Measuring text budget across languages
 
-Word counts assume a space-separated language of roughly English or Spanish
-density. Adjust where typology makes words a bad unit: German compounding
-inflates word length while deflating word count, and Japanese or Chinese need
-characters or clauses instead.
+Word counts assume a space-separated language of average density. Adjust where
+typology makes words a bad unit: heavy compounding inflates word length while
+deflating word count, and a language written without spaces needs characters or
+clauses instead.
 
 The portable measure is **clauses per sentence**, given alongside word counts
 below. When the two disagree, trust the clause count.
@@ -99,14 +100,14 @@ The repo's default, and what `curriculum.py` generates for sessions.
 
 ## How the translation changes across levels
 
-The natural English line does not change. It stays ordinary and idiomatic at
-every level — a C1 story does not get a fancier English rendering, it gets one
-that sits further from the literal line.
+The natural line does not change. It stays ordinary and idiomatic in the
+student's native language at every level — a C1 story does not get a fancier
+rendering, it gets one that sits further from the literal line.
 
 The literal line gets busier as the level rises: more bracketed material, more
 grammar tags, more hyphenated compounds where one word in the target language
-needs three in English. That widening gap is itself the lesson, and it is why
-the two lines are worth keeping separate rather than compromising on one
+needs three in the native one. That widening gap is itself the lesson, and it is
+why the two lines are worth keeping separate rather than compromising on one
 middling translation.
 
 ## Sanity check before finishing

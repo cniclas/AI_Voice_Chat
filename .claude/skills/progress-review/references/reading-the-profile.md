@@ -52,9 +52,10 @@ A session exposes a weakness if its `practice_log` entry drilled a related
 `focus`, or — weaker but real — if it was a conversation long enough
 (`spoken_turns`) that the structure would likely have come up. Grammar the
 student can simply avoid (subjunctive, conditionals) needs a targeted focus to
-count as exposure; things they cannot avoid in any sentence (ser/estar, gender
-agreement, preterite/imperfect in any narration) are exposed by any real
-conversation.
+count as exposure; things they cannot avoid in any sentence (agreement, article
+choice, past-tense aspect in any narration) are exposed by any real conversation.
+Which is which depends on the language: a focus pattern whose entry says "force
+into the story" is by definition one the student would otherwise dodge.
 
 That yields three states the raw count collapses into one:
 
@@ -97,8 +98,9 @@ occurrences that has *never* appeared as a practiced focus is usually the single
 most actionable line in a review.
 
 This happens structurally, not by accident. `skill_refs.pick_focus()` matches
-weakness topics against the ten focus patterns documented in
-`language-lesson/references/languages/es.md` by token stem. A weakness whose
+weakness topics against the focus patterns documented in the student's
+target-language file, `language-lesson/references/languages/<target>.md`, by
+token stem. A weakness whose
 topic the analysis pass phrased in a way that doesn't stem-match any of those
 names — "using ser for temporary states", say, rather than "ser vs estar" — is
 invisible to the picker forever. It accumulates occurrences and never gets

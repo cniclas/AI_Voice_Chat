@@ -1,6 +1,6 @@
 ---
 name: progress-review
-description: Review a language student's long-term progress across all their recorded sessions and set or revise concrete practice goals. Reads the accumulated student profile — recurring weaknesses, what has actually been drilled, session cadence, vocabulary coverage — and reports honestly on what is improving, what is stuck, and what has never been tested, then writes measurable goals back into the profile so the app's generated lessons target them. Use this skill whenever the user asks how they are doing, whether they are getting better, what they should focus on next, what they have been neglecting, whether they are ready to move up a CEFR level, or wants goals set, reviewed, or adjusted. Trigger it for phrasings like "am I improving", "how's my Spanish going", "what should I work on this month", "give me a goal", "review my progress", "am I ready for B2", or "what am I still bad at" — even when no skill is named and no file is handed over.
+description: Review a language student's long-term progress across all their recorded sessions and set or revise concrete practice goals. Reads the accumulated student profile — recurring weaknesses, what has actually been drilled, session cadence, vocabulary coverage — and reports honestly on what is improving, what is stuck, and what has never been tested, then writes measurable goals back into the profile so the app's generated lessons target them. Use this skill whenever the user asks how they are doing, whether they are getting better, what they should focus on next, what they have been neglecting, whether they are ready to move up a CEFR level, or wants goals set, reviewed, or adjusted. Trigger it for phrasings like "am I improving", "how's my French going", "what should I work on this month", "give me a goal", "review my progress", "am I ready for B2", or "what am I still bad at" — even when no skill is named and no file is handed over.
 ---
 
 # Progress review
@@ -131,7 +131,9 @@ conversation, a level drop for that structure.>
 Read `references/goals.md` for what makes a goal workable here and for the exact
 schema. Two things decide most of it: a goal has to be measurable against fields
 the pipeline actually writes, and a focus goal has to name a canonical focus from
-`language-lesson/references/languages/es.md` or the app will silently ignore it.
+the student's target-language file,
+`language-lesson/references/languages/<target>.md`, or the app will silently
+ignore it.
 
 Propose the goals in the conversation and get agreement before writing. These
 change what the app generates tomorrow, so they are not yours to set unilaterally.

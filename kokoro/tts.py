@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -9,6 +10,8 @@ import wave
 import warnings
 import logging
 from kokoro import KPipeline
+
+import languages
 
 # Reduce noisy warnings from dependencies during startup.
 warnings.filterwarnings(
@@ -22,12 +25,11 @@ logging.getLogger("torch").setLevel(logging.ERROR)
 # Kokoro-82M's native output sample rate.
 _MODEL_RATE = 24000
 
-# One voice per supported language. af_heart and ef_dora are Kokoro's
-# top-graded English voice and only female Spanish voice respectively — see
-# https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+# One voice per supported language, taken from the shared registry so adding a
+# language is a `languages.py` entry rather than an edit here. Voice choices are
+# noted there; see https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
 _VOICES = {
-    "en": ("a", "af_heart"),
-    "es": ("e", "ef_dora"),
+    code: lang.tts for code, lang in languages.LANGUAGES.items() if lang.tts
 }
 
 # Make the synthesized voice slightly slower and more natural for speech
@@ -75,12 +77,49 @@ def _resample_to(audio_i16: np.ndarray, src_rate: int, dst_rate: int) -> np.ndar
     return np.clip(np.round(y), -32768, 32767).astype(np.int16)
 
 
+# Kokoro only implements its own chunking for the languages with a bespoke G2P
+# (English, Japanese, Chinese). Everything else — Spanish, French — falls
+# through to espeak, whose wrapper warns that long texts may be truncated unless
+# the caller splits them. A narrated story is often one unbroken paragraph, so
+# splitting on newlines alone would not help: fall through to sentence
+# boundaries, grouping sentences up to a safe length so prosody still spans more
+# than one clause.
+_CHUNK_CHARS = 300
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _chunks(text: str) -> list[str]:
+    out: list[str] = []
+    for paragraph in (p.strip() for p in text.split("\n")):
+        if not paragraph:
+            continue
+        if len(paragraph) <= _CHUNK_CHARS:
+            out.append(paragraph)
+            continue
+        current = ""
+        for sentence in _SENTENCE_END.split(paragraph):
+            if current and len(current) + len(sentence) + 1 > _CHUNK_CHARS:
+                out.append(current)
+                current = sentence
+            else:
+                current = f"{current} {sentence}".strip()
+        if current:
+            out.append(current)
+    return out or [text]
+
+
 def _synthesize_int16(text: str, lang: str) -> np.ndarray:
     """Run Kokoro over `text` and return mono int16 PCM at _MODEL_RATE."""
+    if lang not in _VOICES:
+        raise ValueError(
+            f"No Kokoro voice for language {lang!r}; "
+            f"voices exist for: {', '.join(sorted(_VOICES))}"
+        )
     _, voice = _VOICES[lang]
     chunks = [
         np.asarray(audio, dtype=np.float32)
-        for _, _, audio in _pipelines[lang](text, voice=voice, speed=_SPEED_SCALE)
+        for chunk in _chunks(text)
+        for _, _, audio in _pipelines[lang](chunk, voice=voice, speed=_SPEED_SCALE)
     ]
     if not chunks:
         return np.zeros(0, dtype=np.int16)
@@ -100,8 +139,8 @@ def _wav_bytes(audio_i16: np.ndarray) -> bytes:
 
 def synthesize(text: str, lang: str, output_file: str | None = None, play: bool = True) -> bytes | None:
     """
-    Synthesize text using the given language ("en" or "es").
-    Saves to a WAV file and/or plays the audio locally.
+    Synthesize text using the given language (any `languages.py` entry that
+    carries a Kokoro voice). Saves to a WAV file and/or plays the audio locally.
 
     When play=False, returns the synthesized WAV bytes instead of playing
     them locally — used by the browser UI, which owns audio playback
@@ -132,6 +171,7 @@ if __name__ == "__main__":
     segments = [
         ("Hello, welcome to the demo.", "en"),
         ("Ahora cambiamos al español.", "es"),
+        ("Et maintenant, un peu de français.", "fr"),
         ("Back to English again.", "en"),
     ]
     for i, (text, lang) in enumerate(segments):

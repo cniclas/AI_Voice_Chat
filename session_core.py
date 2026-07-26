@@ -11,6 +11,7 @@ from typing import Optional
 
 import numpy as np
 
+import languages
 from curriculum import chat_completion
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -30,37 +31,44 @@ class Response:
     audio_sample: Optional[str] = None  # Path to audio file
 
 
-BASE_SYSTEM_PROMPT = (
-    "Eres un profesor de español amable y paciente conversando con un estudiante. "
-    "El estudiante puede hablar en inglés o en español; responde SIEMPRE en el "
-    "mismo idioma que usó el estudiante en su último mensaje (se te indicará "
-    "antes de cada mensaje). Habla de forma natural y conversacional, con frases "
-    "cortas porque tus respuestas se leerán en voz alta. Mantén la conversación "
-    "fluida y haz preguntas para que el estudiante siga hablando. No corrijas los "
-    "errores en medio de la conversación; las correcciones se harán al final."
+# The prompts are written in English and parameterised by language name rather
+# than written once per language: a French copy of every prompt would drift out
+# of step with the Spanish one within a couple of edits. What stays written *in*
+# the language is the per-turn reminder (`Language.reply_reminder`), which is
+# the instruction the local model is most likely to actually obey.
+BASE_SYSTEM_PROMPT_TEMPLATE = (
+    "You are a warm, patient {target_name} tutor talking with a student whose "
+    "native language is {native_name}. The student may speak in {native_name} or "
+    "in {target_name}; ALWAYS reply in the same language they used in their last "
+    "message (you are told which before each one). Never answer in a third "
+    "language. Speak naturally and conversationally, in short sentences, because "
+    "your replies are read aloud. Keep the conversation moving and ask questions "
+    "so the student keeps talking. Do not correct mistakes mid-conversation; "
+    "corrections happen at the end of the session."
 )
 
-STORY_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT + (
-    "\n\nHoy la conversación gira en torno a un cuento que el estudiante acaba "
-    "de escuchar, basado en un artículo de Wikipedia. Haz preguntas sobre el "
-    "cuento, su tema y las opiniones del estudiante. Usa este contexto:\n\n"
-    "ARTÍCULO ({article_title}):\n{article_extract}\n\n"
-    "CUENTO:\n{story}"
+STORY_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT_TEMPLATE + (
+    "\n\nToday's conversation is about a story the student has just listened to, "
+    "based on a Wikipedia article. Ask about the story, its subject and what the "
+    "student thinks. Use this context:\n\n"
+    "ARTICLE ({article_title}):\n{article_extract}\n\n"
+    "STORY:\n{story}"
 )
 
-CHALLENGE_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT + (
-    "\n\nEl estudiante acaba de hacer un reto de traducción: escuchó un cuento en "
-    "español y lo tradujo en voz alta a su idioma nativo, el inglés. Ya recibió la "
-    "corrección. Ahora puede preguntar lo que quiera sobre el cuento, sobre una frase "
-    "concreta o sobre sus errores; responde con ejemplos del cuento mismo, citando la "
-    "frase de la que hablas. El enfoque gramatical de hoy es: {focus}.\n\n"
-    "CUENTO ({story_title}):\n{story}\n\n"
+CHALLENGE_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT_TEMPLATE + (
+    "\n\nThe student has just done a translation challenge: they listened to a "
+    "story in {target_name} and translated it aloud into {native_name}, their "
+    "native language. They already have the marked review. Now they can ask "
+    "anything about the story, about one sentence, or about their mistakes; "
+    "answer with examples from the story itself, quoting the sentence you are "
+    "talking about. Today's grammar focus is: {focus}.\n\n"
+    "STORY ({story_title}):\n{story}\n\n"
     "{review_context}"
 )
 
 REVIEW_CONTEXT_TEMPLATE = (
-    "CORRECCIÓN DE SU TRADUCCIÓN:\n{summary}\n{findings}\n\n"
-    "No repitas la corrección entera; el estudiante ya la tiene delante."
+    "THE REVIEW OF THEIR TRANSLATION:\n{summary}\n{findings}\n\n"
+    "Do not repeat the whole review; the student already has it in front of them."
 )
 
 # The tutor is told what the student is working toward, not told to drill it.
@@ -69,17 +77,12 @@ REVIEW_CONTEXT_TEMPLATE = (
 # here is shape the questions asked — steering the student into situations that
 # need the structure is what produces evidence of whether they have it.
 GOAL_CONTEXT_TEMPLATE = (
-    "\n\nEl estudiante está trabajando específicamente en: {goal}. Orienta tus "
-    "preguntas hacia situaciones que requieran esa estructura, de forma natural. "
-    "Sigue sin corregir errores en medio de la conversación."
+    "\n\nThe student is working specifically on: {goal}. Steer your questions "
+    "toward situations that need that structure, naturally. Still do not correct "
+    "mistakes mid-conversation."
 )
 
 CONTEXT_EXTRACT_CHARS = 1200  # article extract length embedded in the system prompt
-
-LANG_REMINDER = {
-    "en": "The student's last message is in English. Reply in English.",
-    "es": "El último mensaje del estudiante está en español. Responde en español.",
-}
 
 
 WHISPER_SAMPLE_RATE = 16000  # Whisper expects 16 kHz mono float32
@@ -135,11 +138,13 @@ def query_llm(user_text: str, language: str, history: list) -> str:
 
     A per-turn language reminder is injected into the outgoing message list
     (never stored in `history`) so the tutor mirrors whichever language the
-    student just spoke, instead of always answering in Spanish.
+    student just spoke, instead of settling into one of them. The reminder is
+    written in that language, which the model follows more reliably than an
+    English instruction about it.
     """
     history.append({"role": "user", "content": user_text})
     messages = history[:-1] + [
-        {"role": "system", "content": LANG_REMINDER[language]},
+        {"role": "system", "content": languages.get(language).reply_reminder},
         history[-1],
     ]
     assistant_text = chat_completion(messages)
@@ -173,23 +178,36 @@ def _goal_context(goal: str | None) -> str:
     return GOAL_CONTEXT_TEMPLATE.format(goal=goal) if goal else ""
 
 
-def build_system_prompt(daily: dict | None, goal: str | None = None) -> str:
+def _lang_names(target: str, native: str) -> dict:
+    return {
+        "target_name": languages.name(target),
+        "native_name": languages.name(native),
+    }
+
+
+def build_system_prompt(daily: dict | None, target: str, native: str,
+                        goal: str | None = None) -> str:
     """Build the LLM system prompt: story-framed if a daily story was
     prepared, otherwise the base conversational prompt.
 
+    `target`/`native` are the practising user's language pair, and decide which
+    language the tutor teaches in and which one it treats as already known.
     `goal` is the student's active focus goal, if they have one; it is optional
     so callers without a profile in hand keep working unchanged.
     """
+    names = _lang_names(target, native)
     if not daily:
-        return BASE_SYSTEM_PROMPT + _goal_context(goal)
+        return BASE_SYSTEM_PROMPT_TEMPLATE.format(**names) + _goal_context(goal)
     return STORY_SYSTEM_PROMPT_TEMPLATE.format(
         article_title=daily["article_title"],
         article_extract=daily["article_extract"][:CONTEXT_EXTRACT_CHARS],
         story=daily["story"],
+        **names,
     ) + _goal_context(goal)
 
 
 def build_challenge_system_prompt(lesson: dict, review: dict | None,
+                                  target: str, native: str,
                                   goal: str | None = None) -> str:
     """System prompt for the conversation that follows a translation challenge.
 
@@ -200,7 +218,7 @@ def build_challenge_system_prompt(lesson: dict, review: dict | None,
     review_context = ""
     if review:
         findings = "\n".join(
-            f"- Frase {f.get('sentence', '?')} ({f.get('verdict', '')}): "
+            f"- Sentence {f.get('sentence', '?')} ({f.get('verdict', '')}): "
             f"{f.get('topic', '')} — {f.get('explanation', '')}"
             for f in review.get("findings", [])
         )
@@ -211,6 +229,7 @@ def build_challenge_system_prompt(lesson: dict, review: dict | None,
         story_title=lesson.get("title", ""),
         story=lesson.get("story", ""),
         review_context=review_context,
+        **_lang_names(target, native),
     ) + _goal_context(goal)
 
 

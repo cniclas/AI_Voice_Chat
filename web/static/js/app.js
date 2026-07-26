@@ -12,8 +12,9 @@
   const outputSelect = document.getElementById('output-device');
   const btnTalk = document.getElementById('btn-talk');
   const btnChallenge = document.getElementById('btn-challenge');
-  const btnEn = document.getElementById('btn-en');
-  const btnEs = document.getElementById('btn-es');
+  const btnNative = document.getElementById('btn-native');
+  const btnTarget = document.getElementById('btn-target');
+  const challengeSub = document.getElementById('challenge-sub');
   const btnStop = document.getElementById('btn-stop');
   const btnExit = document.getElementById('btn-exit');
   const completePanel = document.getElementById('complete-panel');
@@ -37,9 +38,14 @@
   let sessionFinished = false;
   let reconnectDelay = 1000;
   let backendReady = false;
-  // "translate" while the challenge waits for the spoken English translation
-  // (Spanish is not an option for that turn), "converse" otherwise.
+  // "translate" while the challenge waits for the spoken translation into the
+  // student's own language (the target language is not an option for that
+  // turn), "converse" otherwise.
   let stage = 'converse';
+  // The student's language pair, sent by the server in `ready` — which two
+  // languages the record buttons stand for depends on who is practicing.
+  let nativeLang = { code: 'en', label: 'English' };
+  let targetLang = { code: 'es', label: 'Español' };
   // What to put back on screen once a reply finishes playing. The server owns
   // it, so the prompt after the story is "translate it" and not the generic one.
   let idlePrompt = 'Your turn — press a language button and speak.';
@@ -58,16 +64,31 @@
     loadingIndicator.hidden = ready;
   }
 
-  // Re-arm the record buttons for the next turn. Spanish stays out of reach
-  // during the translation stage: the challenge is to say the story's meaning
-  // in English, and a Spanish answer would skip it.
+  // Re-arm the record buttons for the next turn. The target language stays out
+  // of reach during the translation stage: the challenge is to say the story's
+  // meaning in the language the student already has, and answering in the
+  // target language would skip it.
   function enableRecordButtons() {
     if (recording) return;
-    btnEn.disabled = false;
-    btnEs.disabled = stage === 'translate';
-    btnEs.title = stage === 'translate'
-      ? 'Translate into English first — press 🎙 English.'
+    btnNative.disabled = false;
+    btnTarget.disabled = stage === 'translate';
+    btnTarget.title = stage === 'translate'
+      ? `Translate into ${nativeLang.label} first — press 🎙 ${nativeLang.label}.`
       : '';
+  }
+
+  // Put the pair on the buttons (and in the challenge blurb) once the server
+  // has told us who is practicing.
+  function applyLanguagePair(msg) {
+    if (msg.native) nativeLang = msg.native;
+    if (msg.target) targetLang = msg.target;
+    btnNative.textContent = `🎙 ${nativeLang.label}`;
+    btnTarget.textContent = `🎙 ${targetLang.label}`;
+    if (challengeSub) {
+      challengeSub.textContent =
+        `Hear today's ${targetLang.label} story, translate it aloud into `
+        + `${nativeLang.label}, get it marked — then keep talking`;
+    }
   }
 
   function setAvatarState(state) {
@@ -299,6 +320,7 @@
       case 'ready':
         backendReady = true;
         demoMode = !!msg.demo;
+        applyLanguagePair(msg);
         resetToLanding();
         phaseBadge.textContent = demoMode ? 'demo' : 'ready';
         setAvatarState('idle');
@@ -391,9 +413,9 @@
     // Demo mode: no recording — ask the server to play the next scripted
     // exchange (user line + AI answer) in the pressed language. The disabled
     // state doubles as the in-flight guard until the reply has played.
-    if (!wsOpen() || btnEn.disabled) return;
-    btnEn.disabled = true;
-    btnEs.disabled = true;
+    if (!wsOpen() || btnNative.disabled) return;
+    btnNative.disabled = true;
+    btnTarget.disabled = true;
     setAvatarState('thinking');
     ws.send(JSON.stringify({ type: 'simulate_turn', language }));
   }
@@ -406,8 +428,8 @@
     if (recording) return;
     recording = true;
     currentLanguage = language;
-    btnEn.disabled = true;
-    btnEs.disabled = true;
+    btnNative.disabled = true;
+    btnTarget.disabled = true;
     btnStop.disabled = false;
     setAvatarState('listening');
     statusText.textContent = stage === 'translate'
@@ -465,8 +487,8 @@
     event.stopPropagation();
     requestMode('challenge');
   });
-  btnEn.addEventListener('click', () => startRecording('en'));
-  btnEs.addEventListener('click', () => startRecording('es'));
+  btnNative.addEventListener('click', () => startRecording(nativeLang.code));
+  btnTarget.addEventListener('click', () => startRecording(targetLang.code));
   btnStop.addEventListener('click', stopRecording);
   btnExit.addEventListener('click', () => {
     if (!wsOpen()) return;
