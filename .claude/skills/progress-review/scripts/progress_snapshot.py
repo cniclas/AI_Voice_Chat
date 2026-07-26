@@ -88,7 +88,7 @@ def _cadence(entries: list[dict]) -> dict:
     }
 
 
-def analyze(profile: dict, since: date | None, normalize) -> dict:
+def analyze(profile: dict, since: date | None, normalize, target: str) -> dict:
     log = [e for e in profile.get("practice_log", []) if isinstance(e, dict)]
     if since:
         log = [e for e in log if (_parse_date(e.get("date")) or date.min) >= since]
@@ -139,7 +139,7 @@ def analyze(profile: dict, since: date | None, normalize) -> dict:
         "blind_spots": [w for w in weaknesses if w["never_practiced"]],
         "focuses_practiced": practiced,
         "focuses_never_practiced": [
-            name for name in _known_focuses()
+            name for name in _known_focuses(target)
             if not any(normalize(name) == normalize(p) for p in practiced_names)
         ],
         "vocab_never_targeted": [
@@ -154,9 +154,12 @@ def analyze(profile: dict, since: date | None, normalize) -> dict:
     }
 
 
-def _known_focuses() -> list[str]:
+def _known_focuses(target: str) -> list[str]:
+    """The focus patterns documented for the language this student is learning.
+    Passing the target explicitly matters: reading the wrong language's file
+    would make every weakness look like a blind spot."""
     import skill_refs
-    return skill_refs.focus_names()
+    return skill_refs.focus_names(target)
 
 
 def _goal_status(profile: dict, log: list[dict], weaknesses: list[dict], normalize) -> dict:
@@ -308,7 +311,10 @@ def main() -> int:
     from curriculum import load_profile  # noqa: E402
     from skill_refs import _normalize  # noqa: E402  (shared so the join matches pick_focus)
 
-    snapshot = analyze(load_profile(user.profile_path), since, _normalize)
+    # Read-only: pass no target to load_profile so a snapshot never archives
+    # anything, but do use the user's target for the focus join below.
+    snapshot = analyze(load_profile(user.profile_path), since, _normalize,
+                       user.target_lang)
     print(json.dumps(snapshot, indent=2, ensure_ascii=False) if args.json else render(snapshot))
     return 0
 

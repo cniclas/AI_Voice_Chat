@@ -122,7 +122,7 @@ def main() -> int:
 
     from curriculum import load_profile, merge_analysis_into_profile, save_profile  # noqa: E402
 
-    profile = load_profile(user.profile_path)
+    profile = load_profile(user.profile_path, user.target_lang, user.native_lang)
     before = json.loads(json.dumps(profile))  # deep copy for the diff
     merge_analysis_into_profile(profile, review)
 

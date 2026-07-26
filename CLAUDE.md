@@ -22,7 +22,8 @@ uv run python -m uvicorn web.server:app --host 127.0.0.1 --port 8000 --reload
 # review and homework come from the same folder, and the session wraps up
 # automatically once the recorded turns run out. In the translation challenge
 # the first press after the story plays the manuscript's "translation" block
-# (spoken English, then the marked review). Without a "session" folder it
+# (the spoken translation, then the marked review). The manuscript itself is
+# Spanish, so demo mode is most honest as Niclas. Without a "session" folder it
 # falls back to the manuscript's inline turns with placeholder tones. Starts
 # instantly; the manuscript is re-read on every connection, so edit and
 # refresh the browser.
@@ -58,17 +59,19 @@ pipwin install pyaudio
 
 ## Architecture
 
-Every session begins with a one-time user selection — there is no login or auth beyond it. `users.py` at repo root hardcodes the two supported accounts (`USERS = {"niclas": ..., "alejandra": ...}`), each a `User` with a `recordings_dir` and `profile_path` under `recordings/<id>/`. The terminal UI (`main.py`) picks one via an interactive numbered prompt or a `--user niclas`/`--user alejandra` flag; the browser UI shows a landing-panel picker before the session starts, and the chosen id travels as a `?user=` query parameter on the WebSocket connection. Everything the five phases below touch — profile, session recordings, generated lessons — forks per user from that one choice.
+Every session begins with a one-time user selection — there is no login or auth beyond it. `users.py` at repo root hardcodes the two supported accounts (`USERS = {"niclas": ..., "alejandra": ...}`), each a `User` with a `recordings_dir` and `profile_path` under `recordings/<id>/` **and a language pair**: `native_lang` (the language they already have) and `target_lang` (the one they are learning). Niclas is `en → es`, Alejandra `es → fr`. Nothing else in the codebase decides which languages a session uses — every prompt, voice, button label and reference file is selected from the active user's pair, so teaching a new pair is a `users.py` entry plus the reference files described under Skills. `languages.py` is the registry behind that: per language, the English name for prompt templates, the endonym for buttons, the push-to-talk key, the one-line "reply in this language" reminder written *in* that language, the Kokoro voice, and the section headings a generated lesson and review are rendered with. The terminal UI (`main.py`) picks one via an interactive numbered prompt or a `--user niclas`/`--user alejandra` flag; the browser UI shows a landing-panel picker before the session starts, and the chosen id travels as a `?user=` query parameter on the WebSocket connection. Everything the five phases below touch — profile, session recordings, generated lessons — forks per user from that one choice.
 
 A session follows a five-phase arc, shared by both the browser UI (`web/server.py` + `web/session.py`) and the terminal UI (`main.py`):
 
-1. **Prepare** — `session_setup_graph` (a LangGraph workflow in `session_graphs.py`) loads the persistent student profile (`recordings/<user>/student_profile.json`, one per user — `niclas` or `alejandra`, as defined in `users.py`), fetches English Wikipedia's "on this day" events feed for today's calendar date (`curriculum.fetch_onthisday_candidates()`, biased toward events before 1950 for richer historical material, falling back to the full day's pool if too few pre-1950 candidates exist), has the LLM pick the most story-friendly candidate (avoiding recently covered topics and disturbing subject matter), fetches a fuller plaintext extract, and generates a graded ~150-200-word semi-fictional Spanish story from it (weaving in vocabulary the student needs to practice). Saved to the session folder as `article.md`/`story.md`. Any failure (Wikipedia unreachable, Ollama down, bad JSON) sets `setup_failed` and the graph routes straight to `END`, so the caller degrades to a plain conversation instead of crashing.
+1. **Prepare** — `session_setup_graph` (a LangGraph workflow in `session_graphs.py`) loads the persistent student profile (`recordings/<user>/student_profile.json`, one per user — `niclas` or `alejandra`, as defined in `users.py`; a profile is stamped with the `target_lang` it was built for, and switching a user's target language sets the old file aside as `student_profile_<lang>.json` rather than blending two languages' weaknesses into one tally), fetches English Wikipedia's "on this day" events feed for today's calendar date (`curriculum.fetch_onthisday_candidates()`, biased toward events before 1950 for richer historical material, falling back to the full day's pool if too few pre-1950 candidates exist), has the LLM pick the most story-friendly candidate (avoiding recently covered topics and disturbing subject matter), fetches a fuller plaintext extract, and generates a graded ~150-200-word semi-fictional story **in the user's target language** from it (weaving in vocabulary the student needs to practice). Source material is always *English* Wikipedia whatever the pair — it has the richest "on this day" feed and the extract is only ever raw material. Saved to the session folder as `article.md`/`story.md`. Any failure (Wikipedia unreachable, Ollama down, bad JSON) sets `setup_failed` and the graph routes straight to `END`, so the caller degrades to a plain conversation instead of crashing.
 
    The graph's `mode` picks the content branch. `"story"` (the terminal UI) generates the story above. `"challenge"` (the browser's translation challenge, below) instead builds a full graded lesson — story plus the sentence-by-sentence literal/natural translation — and additionally writes `lesson.md`. Both branches leave the prose in `story`, so narration, system prompts and homework downstream don't care which ran.
-2. **Narrate** — the story is read aloud once via `kokoro/tts.py:synthesize()` (Spanish voice) to `story_es.wav`, before the conversation loop starts. The terminal UI plays it locally (`play=True`); the browser UI shows the story as a normal assistant chat bubble and auto-plays that bubble's own `<audio>` element, which fetches `story_es.wav` from the session route.
-3. **Converse** — per-turn: the student's speech is transcribed by Whisper (`whisper/`, installed as a local editable package, loaded once at startup) via `session_core.transcribe_audio()`; `session_core.query_llm()` calls a local Ollama instance (`llama3.1:8b` via HTTP at `localhost:11434`) with a per-turn language reminder injected so the tutor always replies in whichever language (`en`/`es`) the student just used; `synthesize()` speaks the reply. Each turn is saved as a uniquely timestamped WAV in the session folder and tracked in a `Response` dataclass list (`session_core.py`). The terminal UI drives this with `audio_recorder/record.py:record_once()` (raw-terminal push-to-talk: `e`=English, `s`=Spanish, SPACE=stop, `q`=quit) and local playback. The browser UI (`web/session.py:SessionOrchestrator`) drives the same logic over a WebSocket instead: the client captures the mic via the Web Audio API (`web/static/js/audio-capture.js`, an `AudioWorklet` encoding raw PCM into a WAV client-side — no ffmpeg/WebM decoding needed) and plays every sound through the chat bubble's own `<audio controls>` element — a `tts_audio` message is just the auto-play cue (no audio bytes cross the WebSocket), so each message is a single always-controllable source, and starting one bubble pauses the rest (`web/static/js/audio-playback.js` only routes bubble players to the chosen output device) — with independent input/output device pickers. Routing audio entirely through the browser lets the user pick a non-Bluetooth microphone while keeping a Bluetooth headset as output — since nothing then opens a mic stream against the headset, the OS never renegotiates it from the high-quality A2DP profile down to bidirectional HFP/HSP.
+2. **Narrate** — the story is read aloud once via `kokoro/tts.py:synthesize()` (the target language's voice) to `story_<target>.wav`, before the conversation loop starts. The terminal UI plays it locally (`play=True`); the browser UI shows the story as a normal assistant chat bubble and auto-plays that bubble's own `<audio>` element, which fetches that file from the session route. `synthesize()` splits on newlines before handing text to Kokoro: every language except English/Japanese/Chinese goes through espeak, whose wrapper does not chunk and silently truncates long input.
+3. **Converse** — per-turn: the student's speech is transcribed by Whisper (`whisper/`, installed as a local editable package, loaded once at startup) via `session_core.transcribe_audio()`; `session_core.query_llm()` calls a local Ollama instance (`llama3.1:8b` via HTTP at `localhost:11434`) with a per-turn language reminder injected so the tutor always replies in whichever of the pair's two languages the student just used (the reminder is `languages.py`'s `reply_reminder`, written in that language, which the 8B model follows far more reliably than an English instruction about it); `synthesize()` speaks the reply. Each turn is saved as a uniquely timestamped WAV in the session folder and tracked in a `Response` dataclass list (`session_core.py`). The terminal UI drives this with `audio_recorder/record.py:record_once()` (raw-terminal push-to-talk, one key per language from `Language.record_key` — `e`=English, `s`=Spanish, `f`=French — SPACE=stop, `q`=quit) and local playback. The browser UI (`web/session.py:SessionOrchestrator`) drives the same logic over a WebSocket instead: the client captures the mic via the Web Audio API (`web/static/js/audio-capture.js`, an `AudioWorklet` encoding raw PCM into a WAV client-side — no ffmpeg/WebM decoding needed) and plays every sound through the chat bubble's own `<audio controls>` element — a `tts_audio` message is just the auto-play cue (no audio bytes cross the WebSocket), so each message is a single always-controllable source, and starting one bubble pauses the rest (`web/static/js/audio-playback.js` only routes bubble players to the chosen output device) — with independent input/output device pickers. Routing audio entirely through the browser lets the user pick a non-Bluetooth microphone while keeping a Bluetooth headset as output — since nothing then opens a mic stream against the headset, the OS never renegotiates it from the high-quality A2DP profile down to bidirectional HFP/HSP.
 4. **Analyze** — `session_analysis_graph` (also in `session_graphs.py`) asks the LLM (JSON-constrained output via `curriculum.analyze_weaknesses()`) to identify concrete grammar/vocabulary weaknesses from the transcript, saved as `analysis.json`. In a translation challenge the review's findings are folded into the same analysis first (`translation_challenge.merge_review_into_analysis()`), so what the reading exposed and what the speaking exposed are counted once, together.
 5. **Homework + persist** — the same graph turns the analysis into a targeted `homework.md` (`curriculum.generate_homework()`), updates the persistent profile (recurring weaknesses, vocab to practice, covered articles) via `curriculum.merge_analysis_into_profile()`, and appends what the session actually *practiced* — mode, grammar focus, level, whether a translation was marked, how many spoken turns — via `curriculum.record_practice()`. Weaknesses say what the student gets wrong; `practice_log` and `focuses_practiced` say what they have worked on, which is what makes it visible that the subjunctive has been drilled four times and `por`/`para` never.
+
+Every prompt in the pipeline is an **English template parameterised by language name** (`{target_name}`/`{native_name}`) rather than prose written in the target language — a French copy of each prompt would drift out of step with the Spanish one within a couple of edits. The one thing still written in-language is the per-turn reply reminder. Explanations the student reads (analysis summaries, homework, review findings) are generated in their *native* language, since a correction they cannot check is worthless.
 
 `curriculum.py` owns all Wikipedia/Ollama-content logic (fetching, prompts, JSON schemas, profile persistence). `session_graphs.py` sequences the Prepare and Analyze phases as LangGraph workflows (deterministic, mostly linear pipelines with a "skip to END on failure" pattern) — the real-time conversation loop is not a graph, since LangGraph adds nothing for interactive audio. `session_core.py` holds the logic shared by both UIs: transcription, LLM turn-taking, transcript persistence, and system-prompt construction. `main.py` is a thin terminal orchestrator; `web/server.py`/`web/session.py` is the equivalent browser orchestrator, driven by WebSocket messages instead of a blocking loop.
 
@@ -77,21 +80,22 @@ A session follows a five-phase arc, shared by both the browser UI (`web/server.p
 The browser's second entry point — replacing the old "today's Wikipedia story" button — runs the written-practice loop end to end inside a normal voice session, so the two Claude skills below have a local-model counterpart the app can drive on its own:
 
 1. today's Wikipedia article is picked exactly as in Prepare, but becomes a **lesson** rather than a story to chat about: a graded story at the profile's level targeting a grammar focus, plus the sentence-by-sentence `Lit.`/`Nat.` translation that serves as the answer key, plus focus notes, vocabulary and speaking prompts (`translation_challenge.build_lesson()`, saved as `lesson.md`);
-2. the Spanish story is narrated once, as in Narrate;
-3. the student presses 🎙 English and **translates the story aloud**; that turn is transcribed and marked against the answer key (`translation_challenge.review_translation()`, saved as `translation_review.md`/`.json`, spoken back as a short summary and shown in full in the chat bubble);
-4. push-to-talk then continues as usual, with the story and the review in the tutor's system prompt (`session_core.build_challenge_system_prompt()`) so "why is it *le* in sentence four" is answered from the text the student just worked through. Answering in Spanish during step 3 is read as "I'd rather just talk" and skips straight here;
+2. the target-language story is narrated once, as in Narrate;
+3. the student presses the 🎙 button for their *native* language and **translates the story aloud**; that turn is transcribed and marked against the answer key (`translation_challenge.review_translation()`, saved as `translation_review.md`/`.json`, spoken back as a short summary and shown in full in the chat bubble);
+4. push-to-talk then continues as usual, with the story and the review in the tutor's system prompt (`session_core.build_challenge_system_prompt()`) so "why is it *le* in sentence four" is answered from the text the student just worked through. Answering in the *target* language during step 3 is read as "I'd rather just talk" and skips straight here;
 5. Exit runs Analyze + Homework + persist, with the review's findings included.
 
 `lesson.md` is deliberately not linked until the translation has been marked — it contains the answer key. The two artifacts are then offered in the chat (an `artifact` WebSocket message) and again on the completion screen.
 
-`translation_challenge.py` owns the prompts, JSON schemas and markdown rendering for both halves; `skill_refs.py` feeds them by pulling the *exact* sections the skills tell a reader to consult out of `.claude/skills/**/references/` — the CEFR band for the level, the Spanish forms admitted at that level, the focus pattern being drilled, the glossing notation and its worked examples, the judging filters, the Spanish→English trap catalogue. The skill files stay the single source of truth: editing `references/languages/es.md` changes what the app generates with no code change, and a lesson written by Claude and one generated by the app are calibrated to the same scale. The work is split into small separately-validated Ollama calls (story, then one gloss per sentence, then notes) because llama3.1:8b reliably drops half the output when asked for all of it at once; the glossing pass is why building a challenge takes about a minute, and the progress callback threaded through the graph's run config exists so that minute doesn't look like a hang.
+`translation_challenge.py` owns the prompts, JSON schemas and markdown rendering for both halves; `skill_refs.py` feeds them by pulling the *exact* sections the skills tell a reader to consult out of `.claude/skills/**/references/` — the CEFR band for the level, the forms the target language admits at that level, the focus pattern being drilled, the glossing notation and its worked examples, the judging filters, the pair's trap catalogue. Two axes select the files: the **target** language alone gives forms, focus patterns and glossing notes (`language-lesson/references/languages/<target>.md`), while the **pair** gives the comprehension traps (`translation-review/references/languages/<target>-<native>.md`), because what a Spanish speaker misreads in French is not what an English speaker misreads in Spanish. The skill files stay the single source of truth: editing `references/languages/fr.md` changes what the app generates with no code change, and a lesson written by Claude and one generated by the app are calibrated to the same scale. The work is split into small separately-validated Ollama calls (story, then one gloss per sentence, then notes) because llama3.1:8b reliably drops half the output when asked for all of it at once; the glossing pass is why building a challenge takes about a minute, and the progress callback threaded through the graph's run config exists so that minute doesn't look like a hang.
 
 ## Skills
 
 Three Claude-run skills sit alongside the spoken session pipeline. Two of them form a
 written-practice loop:
-`language-lesson` produces a graded story, the student reads their English translation of it
-aloud, and `translation-review` marks that translation. Both run on Claude rather than the
+`language-lesson` produces a graded story in the target language, the student reads their
+translation of it aloud in their native language, and `translation-review` marks that
+translation. Both run on Claude rather than the
 local Ollama model, and both read and write the same per-user `recordings/<user>/student_profile.json`
 (`niclas` or `alejandra`, per `users.py`), so weaknesses found by reading accumulate in the
 same tally as weaknesses found by speaking.
@@ -106,8 +110,8 @@ gloss); the app's version exists so a session can do it without Claude in the lo
 
 `.claude/skills/language-lesson/` builds a standalone written lesson from any source text
 (story, article, fact block): a graded story targeting a chosen grammar focus at a CEFR
-level, plus a word-for-word literal English gloss alongside a natural translation, so the
-learner can trace any single word. It runs on Claude rather than the local Ollama model and
+level, plus a word-for-word literal gloss in the student's native language alongside a
+natural translation, so the learner can trace any single word. It runs on Claude rather than the local Ollama model and
 is independent of the session pipeline above, but reads that same per-user
 `recordings/<user>/student_profile.json` for the default level and vocab to weave in, and
 writes to a gitignored `lessons/` directory.
@@ -115,26 +119,39 @@ writes to a gitignored `lessons/` directory.
 Its references split along what generalizes and what doesn't: `references/levels.md` holds
 the language-neutral CEFR bands (text budget, clause complexity, the *functions* a reader
 can handle), while `references/languages/<code>.md` maps those functions onto one language's
-forms, focus patterns, and glossing quirks. Only `es.md` ships complete; the skill writes a
-new language file the first time it's asked for another language, so a second lesson in that
-language stays calibrated to the same scale. Note that lessons outside `en`/`es` are
-text-only — `kokoro/tts.py` has no voice for them.
+forms, focus patterns, and glossing quirks. `es.md` and `fr.md` ship complete; the skill
+writes a new language file the first time it's asked for another language, so a second
+lesson in that language stays calibrated to the same scale. The one native-language-dependent
+part of that file is `## Glossing notes`, which carries a `### Into <native language>`
+subsection holding the worked examples — a gloss only exists in one language at a time, and
+a Spanish→English example teaches a Spanish speaker reading French nothing. Note that a
+lesson in a language with no `tts` entry in `languages.py` is text-only — `kokoro/tts.py`
+has no voice for it.
+
+The `## Form inventory by level` / `## Focus patterns` / `## Glossing notes` headings and
+the `###` names beneath them are read directly by `skill_refs.py`, so renaming a section
+silently removes it from what the app generates.
 
 ### translation-review
 
 `.claude/skills/translation-review/` marks a spoken translation. The student reads a lesson's
-Spanish aloud in English, Whisper transcribes it, and the skill compares that against the
-lesson's `Nat.` line (the target) using the `Lit.` gloss to pinpoint which morpheme was lost.
+target-language text aloud in their native language, Whisper transcribes it, and the skill
+compares that against the lesson's `Nat.` line (the target) using the `Lit.` gloss to
+pinpoint which morpheme was lost.
 
-Because the student is translating *into* their native language, their English is a readout
-rather than the subject — every deviation is read as a question about the Spanish. The hard
+Because the student is translating *into* their native language, that language is a readout
+rather than the subject — every deviation is read as a question about the target language. The hard
 part is separating comprehension errors from transcription noise: spoken input has no
 spelling, so homophones, punctuation, and disfluency are never findings, and the working
 discriminator is repetition (one deviation is a mishearing, the same one three times is a
 rule the student is missing). Findings land in one of three verdicts — Missed (meaning
 wrong), Blurred (a drilled distinction flattened), Check (English can't show it, so ask
 instead of guessing). `references/judging.md` holds that language-neutral logic;
-`references/languages/es.md` holds the Spanish→English trap catalogue.
+`references/languages/<target>-<native>.md` holds the directional trap catalogue — `es-en.md`
+(Spanish→English) and `fr-es.md` (French→Spanish) ship. Traps are per *pair*, not per
+language: for a close pair like French into Spanish a misreading still produces a fluent
+sentence, so nothing in the transcript announces the error and the alignment against the
+answer key carries more of the weight.
 
 `scripts/transcribe.py` wraps `session_core.transcribe_audio()` so transcripts match what a
 live session would produce; `scripts/record_review.py` merges findings into the profile via
@@ -167,13 +184,14 @@ this skill is the only thing that moves it, judged against `language-lesson`'s `
 `scripts/progress_snapshot.py` does the aggregation (sessions since a weakness was last seen,
 how many of those were focused or substantial, the focus-versus-weakness join, binding
 truncation ceilings); `scripts/record_goals.py` validates and writes the goals block, and
-rejects a focus goal naming a focus the language file doesn't document — that mistake is
-otherwise silent, and the goal would simply never influence a lesson.
+rejects a focus goal naming a focus the student's *target-language* file doesn't document —
+that mistake is otherwise silent, and the goal would simply never influence a lesson.
 
 ## Key constraints
 
-- Only two languages are supported: `"en"` and `"es"`. The language selection happens at record time and flows through the entire pipeline; the tutor mirrors it per turn (fixed from an earlier bug where it always replied in Spanish).
-- `kokoro/tts.py` loads a `KPipeline` per language at module level, which downloads Kokoro-82M weights from Hugging Face on first run if they aren't already cached; a cold first import can take a while on a slow connection.
+- The supported languages are whatever `languages.py` registers (`en`, `es`, `fr` today), and a *session* only ever uses two of them: the active user's `native_lang` and `target_lang`. The language selection happens at record time, flows through the entire pipeline, and the tutor mirrors it per turn (fixed from an earlier bug where it always replied in Spanish). Adding a language means one `languages.py` entry plus a `language-lesson/references/languages/<code>.md`; adding a *pair* additionally means a `translation-review/references/languages/<target>-<native>.md`.
+- A profile belongs to one language pair. `curriculum.load_profile()` archives a profile whose stored `target_lang` no longer matches the user's, so weaknesses, level and goals for two languages never end up in the same tally. A profile written before that key existed is assumed to be the pair it is loaded with and stamped in place, which keeps existing history intact.
+- `kokoro/tts.py` loads a `KPipeline` for every registered language with a voice at module level, which downloads Kokoro-82M weights from Hugging Face on first run if they aren't already cached; a cold first import can take a while on a slow connection. Only English, Japanese and Chinese get a bespoke G2P — Spanish and French go through espeak, which needs `espeak-ng` on the machine and does no chunking of its own, hence the newline split in `synthesize()`.
 - `audio_recorder/` has its own `venv` and `requirements.txt` that is separate from the root venv; the root `requirements.txt` uses `pyaudio` instead. It's only used by the terminal UI — the browser UI captures audio client-side.
 - `recordings/<user>/student_profile.json` (one per user — `niclas` or `alejandra`, as defined in `users.py`) is the one piece of cross-session state; it's gitignored (personal learning data) along with the rest of `recordings/`. Every list in it is capped (`weaknesses` at 30 by occurrences, `practice_log`/`articles_covered` at 60 by recency, `vocab_to_practice` at 40), so an entry can fall off the end — absence is not evidence it was resolved.
 - The browser UI's output-device picker relies on `HTMLMediaElement.setSinkId()`, which is Chromium-only as of writing (Chrome/Edge); other browsers fall back to the system default output device.

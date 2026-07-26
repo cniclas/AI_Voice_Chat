@@ -64,8 +64,8 @@ DEMO_SESSION_NAME = "demo"
 
 # Mirror web/session.py so the idle status lines and filenames match exactly.
 _PROMPT_TO_SPEAK = "Your turn — press a language button and speak."
-_PROMPT_TO_TRANSLATE = (
-    "Your turn to translate — press 🎙 English and say what the story means, "
+_PROMPT_TO_TRANSLATE_TEMPLATE = (
+    "Your turn to translate — press 🎙 {native} and say what the story means, "
     "sentence by sentence."
 )
 LESSON_FILENAME = "lesson.md"
@@ -99,7 +99,9 @@ _MIN_USER_AUDIO_BYTES = 24000
 _SAMPLE_RATE = 24000  # matches Kokoro's native rate
 _SECONDS_PER_WORD = 0.14
 _MAX_AUDIO_SECONDS = 7.0
-_BASE_PITCH_HZ = {"en": 210.0, "es": 175.0}
+# One tone per language so the placeholder audio is at least distinguishable;
+# anything not listed falls back to 200 Hz at the call sites.
+_BASE_PITCH_HZ = {"en": 210.0, "es": 175.0, "fr": 195.0}
 _USER_PITCH_SCALE = 0.72  # the simulated student "voice" sits lower
 
 # `**[23:53:34] You (en):** text` — the format save_transcript() writes.
@@ -183,7 +185,10 @@ def _load_recorded_session(manuscript: dict, session_dir: Path):
     article_title = ""
     if (session_dir / "article.md").is_file():
         article_title, _ = _heading_and_body(session_dir / "article.md")
-    story_audio = session_dir / "story_es.wav"
+    # Recorded folders name the narration for the language it is in; folders
+    # recorded before that was true are all Spanish.
+    story_audio = next(
+        (p for p in sorted(session_dir.glob("story_*.wav"))), session_dir / "story_es.wav")
     manuscript["story"] = {
         "article_title": article_title or story_title,
         "story_title": story_title,
@@ -292,9 +297,14 @@ class DemoSessionOrchestrator:
 
     def __init__(self, ws: WebSocket, app_state, whisper_lock: asyncio.Lock, user):
         self.ws = ws
-        # Accepted only for constructor-signature parity with SessionOrchestrator;
-        # demo mode keeps its existing hardcoded recordings/demo folder behavior.
+        # Demo mode keeps its hardcoded recordings/demo folder, but still
+        # honours the picked user's language pair so the buttons and prompts
+        # read the same as they would in a real session.
         self.user = user
+        self.target = user.target
+        self.native = user.native
+        self.prompt_to_translate = _PROMPT_TO_TRANSLATE_TEMPLATE.format(
+            native=self.native.endonym)
         self.manuscript = _load_manuscript()
         self.delays = self.manuscript["delays_seconds"]
         self.session_dir: Path | None = None
@@ -325,7 +335,11 @@ class DemoSessionOrchestrator:
         try:
             # demo=True tells the frontend to simulate turns instead of
             # recording from the microphone.
-            await self._send("ready", demo=True)
+            await self._send(
+                "ready", demo=True,
+                native={"code": self.native.code, "label": self.native.endonym},
+                target={"code": self.target.code, "label": self.target.endonym},
+            )
             await self._command_loop()
         except (WebSocketDisconnect, _SessionEnded):
             pass
@@ -365,7 +379,8 @@ class DemoSessionOrchestrator:
                     await self._play_scripted_translation()
                     continue
                 else:
-                    await self._play_scripted_turn(message.get("language", "en"))
+                    await self._play_scripted_turn(
+                        message.get("language", self.native.code))
                 if self.turn_index >= len(self.manuscript["turns"]):
                     # Script exhausted — let the last reply finish playing
                     # client-side, then wrap the session up automatically.
@@ -422,18 +437,19 @@ class DemoSessionOrchestrator:
         if story:
             await self._status("speaking", "Reading today's story aloud…")
             audio_bytes = _part_audio(
-                story, f"{story['story_title']}. {story['story']}", "es")
-            (self.session_dir / "story_es.wav").write_bytes(audio_bytes)
+                story, f"{story['story_title']}. {story['story']}", self.target.code)
+            story_filename = f"story_{self.target.code}.wav"
+            (self.session_dir / story_filename).write_bytes(audio_bytes)
             # Mirror web/session.py: the story is a normal assistant bubble
-            # (sent after story_es.wav exists — the bubble's audio element is
+            # (sent after the WAV exists — the bubble's audio element is
             # the single playback source and fetches it from the session
             # route; tts_audio is just the auto-play cue).
             await self._send(
                 "transcript",
                 author="assistant",
-                language="es",
+                language=self.target.code,
                 text=f"{story['story_title']}\n\n{story['story']}",
-                audio_filename="story_es.wav",
+                audio_filename=story_filename,
             )
             await self._send("tts_audio", turn="story")
             await self._wait_for("tts_playback_done")
@@ -442,8 +458,8 @@ class DemoSessionOrchestrator:
         # translation has been marked — same as the real session.
         self._write_lesson_file()
         self.awaiting_translation = True
-        await self._set_stage("translate", _PROMPT_TO_TRANSLATE)
-        await self._status("idle", _PROMPT_TO_TRANSLATE)
+        await self._set_stage("translate", self.prompt_to_translate)
+        await self._status("idle", self.prompt_to_translate)
 
     def _write_lesson_file(self):
         """The recorded session's lesson when there is one, otherwise the story
@@ -459,7 +475,7 @@ class DemoSessionOrchestrator:
     async def _handle_turn(self, header: dict):
         """Mic-driven path, kept for protocol compatibility: a user_audio
         header followed by one binary frame of recorded WAV."""
-        language = header.get("language", "en")
+        language = header.get("language", self.native.code)
         audio_bytes = await self.ws.receive_bytes()
 
         if len(audio_bytes) < _MIN_USER_AUDIO_BYTES:
@@ -475,7 +491,7 @@ class DemoSessionOrchestrator:
 
     async def _play_scripted_translation(self, user_audio_bytes: bytes | None = None):
         """The challenge's one scripted special turn: the student's spoken
-        English translation, then the marked review."""
+        translation into their own language, then the marked review."""
         self.awaiting_translation = False
         script = self.manuscript.get("translation") or {}
         student_text = script.get("student", "(no scripted translation)")
@@ -483,19 +499,20 @@ class DemoSessionOrchestrator:
 
         if user_audio_bytes is None:
             user_audio_bytes = _placeholder_speech_wav(
-                student_text, "en", pitch_hz=_BASE_PITCH_HZ["en"] * _USER_PITCH_SCALE)
-        audio_path = generate_audio_filename(self.session_dir, "user", "en")
+                student_text, self.native.code,
+                pitch_hz=_BASE_PITCH_HZ.get(self.native.code, 200.0) * _USER_PITCH_SCALE)
+        audio_path = generate_audio_filename(self.session_dir, "user", self.native.code)
         Path(audio_path).write_bytes(user_audio_bytes)
 
         await self._status("thinking", "Transcribing what you said…")
         user_start = datetime.now()
         await asyncio.sleep(self.delays["transcribe"])
         self.responses.append(Response(
-            author="user", language="en", text=student_text,
+            author="user", language=self.native.code, text=student_text,
             timestamp=datetime.now(), audio_sample=audio_path,
         ))
         await self._send(
-            "transcript", author="user", language="en", text=student_text,
+            "transcript", author="user", language=self.native.code, text=student_text,
             audio_filename=Path(audio_path).name,
             processing_ms=int((datetime.now() - user_start).total_seconds() * 1000),
         )
@@ -506,12 +523,13 @@ class DemoSessionOrchestrator:
         await self._status("thinking", "Synthesizing speech…")
         await asyncio.sleep(self.delays["synthesize"])
 
-        review_audio_path = generate_audio_filename(self.session_dir, "assistant", "en")
-        review_audio = _placeholder_speech_wav(review_text, "en")
+        review_audio_path = generate_audio_filename(
+            self.session_dir, "assistant", self.native.code)
+        review_audio = _placeholder_speech_wav(review_text, self.native.code)
         Path(review_audio_path).write_bytes(review_audio)
         self._last_reply_seconds = _wav_duration_seconds(review_audio)
         self.responses.append(Response(
-            author="assistant", language="en", text=review_text,
+            author="assistant", language=self.native.code, text=review_text,
             timestamp=datetime.now(), audio_sample=review_audio_path,
         ))
         (self.session_dir / REVIEW_FILENAME).write_text(
@@ -520,7 +538,7 @@ class DemoSessionOrchestrator:
 
         await self._set_stage("converse", _PROMPT_TO_SPEAK)
         await self._send(
-            "transcript", author="assistant", language="en", text=review_text,
+            "transcript", author="assistant", language=self.native.code, text=review_text,
             audio_filename=Path(review_audio_path).name,
             processing_ms=int((datetime.now() - review_start).total_seconds() * 1000),
         )

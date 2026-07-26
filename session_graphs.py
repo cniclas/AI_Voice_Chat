@@ -64,9 +64,22 @@ class SessionState(TypedDict, total=False):
 # Session setup graph
 # ---------------------------------------------------------------------------
 
+def _langs(state: SessionState) -> tuple[str, str]:
+    """The (target, native) pair for whoever is practising.
+
+    Derived from `user_id` on every use rather than copied into the state: the
+    pair is a fact about the user, and both graphs already resolve the user to
+    find their profile path. Duplicating it into the state would only create
+    something that can disagree with `users.py`.
+    """
+    user = users.get_user(state["user_id"])
+    return user.target_lang, user.native_lang
+
+
 def load_profile_node(state: SessionState) -> dict:
     user = users.get_user(state["user_id"])
-    return {"profile": curriculum.load_profile(user.profile_path)}
+    return {"profile": curriculum.load_profile(
+        user.profile_path, user.target_lang, user.native_lang)}
 
 
 def fetch_onthisday_feed_node(state: SessionState) -> dict:
@@ -92,7 +105,9 @@ def extract_candidates_node(state: SessionState) -> dict:
 
 def select_article_node(state: SessionState) -> dict:
     try:
-        return {"article": curriculum.select_article(state["candidates"], state["profile"])}
+        target, _ = _langs(state)
+        return {"article": curriculum.select_article(
+            state["candidates"], state["profile"], target)}
     except requests.RequestException as e:
         return {"setup_failed": f"Ollama unavailable during article selection: {e}"}
 
@@ -111,7 +126,7 @@ def generate_story_node(state: SessionState) -> dict:
     profile = state["profile"]
     try:
         story = curriculum.generate_story(
-            state["article"]["title"], state["article_extract"], profile)
+            state["article"]["title"], state["article_extract"], profile, *_langs(state))
         return {"story": story, "practice_words": curriculum.top_vocab_to_practice(profile)}
     except (requests.RequestException, ValueError, KeyError) as e:
         return {"setup_failed": f"story generation failed: {e}"}
@@ -131,7 +146,8 @@ def build_lesson_node(state: SessionState, config: RunnableConfig | None = None)
     progress = (config or {}).get("configurable", {}).get("progress")
     try:
         lesson = translation_challenge.build_lesson(
-            state["article"]["title"], state["article_extract"], profile, progress=progress)
+            state["article"]["title"], state["article_extract"], profile,
+            *_langs(state), progress=progress)
     except (requests.RequestException, ValueError, KeyError) as e:
         return {"setup_failed": f"lesson generation failed: {e}"}
     return {
@@ -224,7 +240,7 @@ def analyze_transcript_node(state: SessionState) -> dict:
     out = {"recurring": curriculum.top_weaknesses(state["profile"]), "analysis": None}
     analysis = None
     try:
-        analysis = curriculum.analyze_weaknesses(state["transcript_text"])
+        analysis = curriculum.analyze_weaknesses(state["transcript_text"], *_langs(state))
     except (requests.RequestException, ValueError) as e:
         print(f"Analysis unavailable ({e}); homework will use the raw transcript.")
 
@@ -245,7 +261,7 @@ def generate_homework_node(state: SessionState) -> dict:
     try:
         homework = curriculum.generate_homework(
             state.get("analysis"), state["transcript_text"],
-            story["title"] if story else None, state["recurring"])
+            story["title"] if story else None, state["recurring"], *_langs(state))
         return {"homework": homework}
     except requests.RequestException as e:
         print(f"Could not generate homework (Ollama error): {e}")

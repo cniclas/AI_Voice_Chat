@@ -27,8 +27,9 @@ Spoken input has no spelling, so any error that exists only in orthography is an
 artifact of transcription and cannot be attributed to the student:
 
 - **Spelling and punctuation of every kind.** They did not spell anything.
-- **Homophones** — their/there/they're, its/it's, to/two/too. The student's mouth
-  produced one sound; the spelling is Whisper's guess.
+- **Homophones**, in whatever language the student is speaking — English
+  their/there/they're, Spanish hasta/asta, French vert/verre/vers. The student's
+  mouth produced one sound; the spelling is Whisper's guess.
 - **Capitalization**, including names read as common nouns.
 - **Sentence boundaries.** Whisper punctuates by prosody, so run-ons and splits
   reflect where they breathed.
@@ -49,15 +50,16 @@ Ordinary speech behavior is equally out of bounds:
 ## Signals it is the learner, not the microphone
 
 - **The wrong word is semantically wrong but phonetically far** from the right
-  one. Hearing "road" for "river" is a microphone; saying "road" where the
-  Spanish says *río* and nothing sounds like "road" is a lookup failure.
+  one. Hearing "road" for "river" is a microphone; saying "road" where the source
+  says *river* and nothing in the sentence sounds like "road" is a lookup
+  failure.
 - **The deviation tracks a structure in the source.** A pronoun that matches the
   wrong participant, a tense that matches a different verb form on the page — the
   error has a *shape* that maps onto the grammar. Whisper knows nothing about the
-  Spanish and cannot produce a mistake shaped like its morphology.
+  source language and cannot produce a mistake shaped like its morphology.
 - **A whole clause is missing.** Whisper drops words; it rarely drops a complete
   proposition.
-- **A false friend rendered as its English lookalike.** This is close to
+- **A false friend rendered as its native-language lookalike.** This is close to
   diagnostic, since it is precisely what a learner does and has no acoustic
   explanation.
 - **Hedging in the audio itself** — long pauses, a rising uncertain tone,
@@ -66,9 +68,9 @@ Ordinary speech behavior is equally out of bounds:
 
 ## Paraphrase is not error
 
-The student is translating, not producing a key. Any English that carries the
-same meaning is correct, and treating one target rendering as the only right
-answer teaches them to translate word-for-word — the opposite of the goal.
+The student is translating, not producing a key. Any rendering that carries the
+same meaning is correct, and treating one as the only right answer teaches them
+to translate word-for-word — the opposite of the goal.
 
 Correct, all of them: a different register ("got up" / "rose"), a restructured
 sentence, an active-to-passive shift that keeps the participants straight, an
@@ -84,14 +86,16 @@ lexical item confused, a clause invented. These are the findings that matter
 most and they are usually unambiguous once you have filtered for noise.
 
 **Blurred.** The meaning survives but a distinction the lesson was built around
-has been flattened. The English sounds fine, which is why this category gets
-missed. A student translating an aspect contrast into undifferentiated simple
-past has produced acceptable English and shown you nothing about whether they saw
+has been flattened. The translation sounds fine, which is why this category gets
+missed. A student translating an aspect contrast into one undifferentiated past
+tense has produced acceptable prose and shown you nothing about whether they saw
 the contrast — worth naming, gently, because it is the whole point of the lesson.
 
-**Check.** You genuinely cannot tell. English does not mark much of what other
-languages mark: mood, formality, aspect in many contexts, the ser/estar split.
-When the student's rendering is compatible with both readings, do not guess.
+**Check.** You genuinely cannot tell. No two languages mark the same things, and
+whatever the native language leaves unmarked — mood, formality, aspect,
+definiteness, a copula distinction — is invisible in the transcript by
+construction. The pair file lists which ones apply. When the student's rendering
+is compatible with both readings, do not guess.
 
 Guessing here is the most damaging failure this skill can make, because it
 produces a confident correction of something that was never wrong. Ask instead —

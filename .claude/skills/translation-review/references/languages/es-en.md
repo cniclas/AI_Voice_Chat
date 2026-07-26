@@ -147,12 +147,15 @@ These are structurally invisible in translation. Do not mark them wrong — ask.
   *poner* / *ponerse* (put / become). **Symptom:** the plain verb's meaning in a
   sentence where the reflexive changes it. **Missed.**
 
-## Adding another language
+## Adding another pair
 
-If the student is reading a language with no file here, write
-`references/languages/<code>.md` on the same plan: participant-marking traps,
-tense/aspect/mood, false friends, distinctions English cannot show, idioms that
-punish literal reading, and structural gotchas. Keep the verdict labels, since
-they are what the review's shape depends on. Prioritize by what the language
-marks that English doesn't — that is where invisible errors hide, and where
-Check questions do the most work.
+Traps are directional: what a Spanish speaker misreads in French is not what an
+English speaker misreads in Spanish, so the file is named for the pair, not the
+language. If the student is reading a language into a native language with no
+file here, write `references/languages/<target>-<native>.md` on the same plan:
+participant-marking traps, tense/aspect/mood, false friends *for that native
+language*, distinctions the native language cannot show, idioms that punish
+literal reading, and structural gotchas. Keep the verdict labels, since they are
+what the review's shape depends on. Prioritize by what the target marks that the
+native language doesn't — that is where invisible errors hide, and where Check
+questions do the most work.

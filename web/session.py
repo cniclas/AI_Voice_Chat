@@ -55,8 +55,8 @@ from session_core import (
 )
 
 _PROMPT_TO_SPEAK = "Your turn — press a language button and speak."
-_PROMPT_TO_TRANSLATE = (
-    "Your turn to translate — press 🎙 English and say what the story means, "
+_PROMPT_TO_TRANSLATE_TEMPLATE = (
+    "Your turn to translate — press 🎙 {native} and say what the story means, "
     "sentence by sentence."
 )
 
@@ -89,6 +89,13 @@ class SessionOrchestrator:
         # translation, "converse" for ordinary push-to-talk turns.
         self.stage: str = "converse"
         self.awaiting_mode = True
+        # The pair this student practises; everything language-shaped below
+        # (narration voice, which button counts as "translate", which language
+        # the review is written in) reads off these rather than assuming es/en.
+        self.target = user.target
+        self.native = user.native
+        self.prompt_to_translate = _PROMPT_TO_TRANSLATE_TEMPLATE.format(
+            native=self.native.endonym)
 
     async def _send(self, type_: str, **payload):
         await self.ws.send_json({"type": type_, **payload})
@@ -112,7 +119,11 @@ class SessionOrchestrator:
             # claim readiness until the model is actually available.
             await self.app_state.whisper_ready.wait()
             self.whisper_model = self.app_state.whisper_model
-            await self._send("ready")
+            await self._send(
+                "ready",
+                native={"code": self.native.code, "label": self.native.endonym},
+                target={"code": self.target.code, "label": self.target.endonym},
+            )
             await self._command_loop()
         except (WebSocketDisconnect, _SessionEnded):
             # Normal session termination.
@@ -177,6 +188,16 @@ class SessionOrchestrator:
         """
         return curriculum.goal_focus(self.profile) if self.profile else None
 
+    def _base_prompt(self) -> str:
+        """The plain conversational prompt, framed for this student's pair."""
+        return build_system_prompt(
+            None, self.target.code, self.native.code, self._goal_focus())
+
+    def _story_filename(self) -> str:
+        """Narration lands in the session folder named for the language it is
+        in, so a folder is self-describing when the demo replays it later."""
+        return f"story_{self.target.code}.wav"
+
     def _progress_reporter(self):
         """A thread-safe `progress(done, total, label)` for the lesson build,
         which runs in a worker thread but wants to push status lines onto the
@@ -207,9 +228,11 @@ class SessionOrchestrator:
         self.mode = "talk"
         self._ensure_session_dir()
         if self.profile is None:
-            self.profile = await asyncio.to_thread(curriculum.load_profile, self.user.profile_path)
+            self.profile = await asyncio.to_thread(
+                curriculum.load_profile, self.user.profile_path,
+                self.user.target_lang, self.user.native_lang)
         self.llm_history = [
-            {"role": "system", "content": build_system_prompt(None, self._goal_focus())}]
+            {"role": "system", "content": self._base_prompt()}]
         await self._send("mode", mode="talk", session_name=self.session_name)
         await self._status("idle", _PROMPT_TO_SPEAK)
 
@@ -239,7 +262,7 @@ class SessionOrchestrator:
             await self._send("error", message=self.setup_state.get(
                 "setup_failed", "Today's challenge could not be built."))
             self.llm_history = [
-                {"role": "system", "content": build_system_prompt(None, self._goal_focus())}]
+                {"role": "system", "content": self._base_prompt()}]
             await self._set_stage("converse", _PROMPT_TO_SPEAK)
             await self._status("idle", _PROMPT_TO_SPEAK)
             return
@@ -248,41 +271,43 @@ class SessionOrchestrator:
         # folded into the prompt once it exists.
         self.llm_history = [
             {"role": "system",
-             "content": build_challenge_system_prompt(self.lesson, None, self._goal_focus())}]
+             "content": build_challenge_system_prompt(
+                 self.lesson, None, self.target.code, self.native.code,
+                 self._goal_focus())}]
 
         await self._status("speaking", "Reading today's story aloud…")
         await asyncio.to_thread(
             synthesize,
             f"{self.lesson['title']}. {self.lesson['story']}",
-            lang="es",
-            output_file=str(self.session_dir / "story_es.wav"),
+            lang=self.target.code,
+            output_file=str(self.session_dir / self._story_filename()),
             play=False,
         )
         # The story arrives as a normal assistant chat bubble, so it gets the
         # same audio control as every other reply. Sent only after synthesize()
-        # has written story_es.wav: the bubble's audio element is the single
+        # has written story_<target>.wav: the bubble's audio element is the single
         # playback source, and it fetches that file from the session route.
         # tts_audio is just the auto-play cue.
         await self._send(
             "transcript",
             author="assistant",
-            language="es",
+            language=self.target.code,
             text=f"{self.lesson['title']}\n\n{self.lesson['story']}",
-            audio_filename="story_es.wav",
+            audio_filename=self._story_filename(),
         )
         await self._send("tts_audio", turn="story")
         await self._wait_for("tts_playback_done")
 
         # lesson.md carries the answer key, so it is deliberately not linked
         # until the translation has been marked.
-        await self._set_stage("translate", _PROMPT_TO_TRANSLATE)
-        await self._status("idle", _PROMPT_TO_TRANSLATE)
+        await self._set_stage("translate", self.prompt_to_translate)
+        await self._status("idle", self.prompt_to_translate)
 
     # -- Per-turn conversation ----------------------------------------------
 
     async def _handle_turn(self, header: dict):
         # A user_audio header is always followed by one binary frame.
-        language = header.get("language", "en")
+        language = header.get("language", self.native.code)
         audio_bytes = await self.ws.receive_bytes()
 
         audio_path = generate_audio_filename(self.session_dir, "user", language)
@@ -300,7 +325,7 @@ class SessionOrchestrator:
                 "idle",
                 "No speech detected — try again."
                 if self.stage != "translate" else
-                f"No speech detected. {_PROMPT_TO_TRANSLATE}")
+                f"No speech detected. {self.prompt_to_translate}")
             return
 
         self.responses.append(Response(
@@ -317,11 +342,11 @@ class SessionOrchestrator:
         )
 
         if self.stage == "translate":
-            if language == "en":
+            if language == self.native.code:
                 await self._mark_translation(user_text)
                 return
-            # Answering in Spanish means the student has moved on from the
-            # translation; take them at their word and just talk.
+            # Answering in the target language means the student has moved on
+            # from the translation; take them at their word and just talk.
             await self._set_stage("converse", _PROMPT_TO_SPEAK)
 
         await self._reply_to(user_text, language)
@@ -383,15 +408,20 @@ class SessionOrchestrator:
         # The bubble carries the full review; the spoken version is a short
         # summary, because a list of sentence-by-sentence corrections is much
         # easier to read than to listen to.
-        chat_text = translation_challenge.review_chat_text(self.review)
-        spoken = translation_challenge.spoken_review_summary(self.review)
+        chat_text = translation_challenge.review_chat_text(self.review, self.lesson)
+        spoken = translation_challenge.spoken_review_summary(self.review, self.lesson)
 
+        # The review is spoken in the student's own language: its whole job is
+        # to explain, and an explanation in the language being learned would be
+        # the one thing the student cannot check.
         await self._status("thinking", "Synthesizing speech…")
-        assistant_audio_path = generate_audio_filename(self.session_dir, "assistant", "en")
+        assistant_audio_path = generate_audio_filename(
+            self.session_dir, "assistant", self.native.code)
         await asyncio.to_thread(
-            synthesize, spoken, lang="en", output_file=assistant_audio_path, play=False)
+            synthesize, spoken, lang=self.native.code,
+            output_file=assistant_audio_path, play=False)
         self.responses.append(Response(
-            author="assistant", language="en", text=chat_text,
+            author="assistant", language=self.native.code, text=chat_text,
             timestamp=datetime.now(), audio_sample=assistant_audio_path,
         ))
 
@@ -399,7 +429,8 @@ class SessionOrchestrator:
         self.llm_history = [
             {"role": "system",
              "content": build_challenge_system_prompt(
-                 self.lesson, self.review, self._goal_focus())}]
+                 self.lesson, self.review, self.target.code, self.native.code,
+                 self._goal_focus())}]
 
         # Stage first, so the client already knows the right idle prompt by the
         # time the review audio finishes playing.
@@ -407,7 +438,7 @@ class SessionOrchestrator:
         await self._send(
             "transcript",
             author="assistant",
-            language="en",
+            language=self.native.code,
             text=chat_text,
             audio_filename=Path(assistant_audio_path).name,
         )
@@ -488,7 +519,8 @@ class SessionOrchestrator:
         """Track record for a challenge the student left before speaking. Runs
         off the event loop; the article itself was already recorded eagerly by
         the setup graph."""
-        profile = self.profile or curriculum.load_profile(self.user.profile_path)
+        profile = self.profile or curriculum.load_profile(
+            self.user.profile_path, self.user.target_lang, self.user.native_lang)
         curriculum.record_practice(
             profile,
             session_name=self.session_dir.name,

@@ -181,13 +181,15 @@ def main() -> int:
     import skill_refs  # noqa: E402
     from skill_refs import _normalize  # noqa: E402
 
-    problems = _validate(block, skill_refs.focus_names(), _normalize)
+    # Validated against the student's own target language: a French focus name
+    # is not a typo for a Spanish one, it belongs to a different file.
+    problems = _validate(block, skill_refs.focus_names(user.target_lang), _normalize)
     if problems:
         raise SystemExit("Goals JSON is malformed:\n" + "\n".join(f"  - {p}" for p in problems))
 
     from curriculum import load_profile, save_profile  # noqa: E402
 
-    profile = load_profile(user.profile_path)
+    profile = load_profile(user.profile_path, user.target_lang, user.native_lang)
     before = json.loads(json.dumps(profile.get("goals") or {"active": [], "archive": []}))
 
     after = {

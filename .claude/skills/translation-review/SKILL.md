@@ -1,29 +1,39 @@
 ---
 name: translation-review
-description: Review a student's spoken translation of a foreign-language text back into their native language — they read a Spanish story and say the English aloud, Whisper transcribes it, and this skill compares it against the source to find genuine comprehension errors, separate them from speech-recognition noise, and explain each one with a correction. Pairs with the language-lesson skill, using that lesson's literal gloss as the answer key. Use this skill whenever the user has spoken or recorded a translation and wants it checked, asks "did I get this right", hands over a WAV or transcript of themselves translating, wants to know which words or tenses they misread, or wants their translation graded, marked, or corrected. Trigger it even when they just paste a transcript alongside a Spanish text without naming the skill.
+description: Review a student's spoken translation of a foreign-language text back into their native language — they read a story in the language they are learning and say its meaning aloud in the language they already have, Whisper transcribes it, and this skill compares it against the source to find genuine comprehension errors, separate them from speech-recognition noise, and explain each one with a correction. Pairs with the language-lesson skill, using that lesson's literal gloss as the answer key. Use this skill whenever the user has spoken or recorded a translation and wants it checked, asks "did I get this right", hands over a WAV or transcript of themselves translating, wants to know which words or tenses they misread, or wants their translation graded, marked, or corrected. Trigger it even when they just paste a transcript alongside a foreign-language text without naming the skill.
 ---
 
 # Translation review
 
-The student reads a Spanish story and speaks its English meaning aloud. Whisper
-transcribes that. This skill turns the transcript into a short, honest review:
-what they misunderstood, why, and what the Spanish actually said.
+The student reads a story in their target language and speaks its meaning aloud
+in their native one. Whisper transcribes that. This skill turns the transcript
+into a short, honest review: what they misunderstood, why, and what the source
+actually said.
+
+The pair comes from the student's `users.py` entry — Niclas reads Spanish and
+speaks English, Alejandra reads French and speaks Spanish — so "target" and
+"native" below are whichever two languages that says.
 
 ## What is actually under test
 
 They are translating *into* their native language. That single fact settles most
 judgment calls in this skill.
 
-Their English is not the subject — it is the readout. Awkward English, a dropped
-article, an odd word choice: none of that tells you anything about their Spanish,
-because English is the language they already have. What the English reveals is
-whether they **decoded the Spanish correctly**. A wrong pronoun means they misread
-a clitic. A flattened tense means they missed an aspect contrast. A missing clause
-means they skipped a line or guessed.
+Their native language is not the subject — it is the readout. Awkward phrasing, a
+dropped article, an odd word choice: none of that tells you anything about the
+language they are learning, because the native one is the language they already
+have. What it reveals is whether they **decoded the source correctly**. A wrong
+pronoun means they misread a clitic. A flattened tense means they missed an aspect
+contrast. A missing clause means they skipped a line or guessed.
 
-So: read every deviation as a question about the *Spanish*. If a deviation has no
-plausible Spanish explanation, it is almost certainly the microphone or ordinary
-speech, and it is not a finding.
+So: read every deviation as a question about the *target language*. If a
+deviation has no plausible explanation in the source, it is almost certainly the
+microphone or ordinary speech, and it is not a finding.
+
+For a close pair — French read into Spanish, say — add one caution: a
+misreading still produces a fluent sentence, so nothing in the transcript
+announces the error. The alignment against the answer key is doing more work
+there than it does for a distant pair.
 
 ## Inputs
 
@@ -34,14 +44,14 @@ profile gets updated in Step 5 and where the review gets saved.
 | Input | Notes |
 |---|---|
 | **The spoken translation** | A transcript, or a WAV to transcribe with `scripts/transcribe.py`. Required. |
-| **The source text** | Best: the lesson file from the `language-lesson` skill, which carries an answer key. Otherwise raw Spanish text — then work out the reference translation yourself before reading their attempt, so their wording doesn't anchor you. |
+| **The source text** | Best: the lesson file from the `language-lesson` skill, which carries an answer key. Otherwise the raw target-language text — then work out the reference translation yourself before reading their attempt, so their wording doesn't anchor you. |
 | **The lesson focus** | From the lesson file's header. It decides which distinctions matter most; without it, weight all equally. |
 
 ### Why the lesson file is worth asking for
 
-A lesson from `language-lesson` gives you two things a bare Spanish text can't.
+A lesson from `language-lesson` gives you two things a bare source text can't.
 The `Nat.` line is the target — what a competent translation looks like. The
-`Lit.` line is the diagnostic instrument: when the student's English diverges,
+`Lit.` line is the diagnostic instrument: when the student's rendering diverges,
 the gloss shows you *which word or morpheme* they lost, so the explanation can
 point at the exact thing rather than paraphrasing the whole sentence.
 
@@ -56,9 +66,10 @@ uv run python .claude/skills/translation-review/scripts/transcribe.py <audio.wav
 
 Defaults to `large-v3`, the model the app loads, so the transcript matches what
 the rest of the pipeline would produce. Pass `--model base` if you only need a
-rough pass and the load time is hurting. Transcribe with `--language en`, the
-default — the student is speaking English, and letting Whisper auto-detect
-invites it to hear Spanish in the proper nouns.
+rough pass and the load time is hurting. Pass `--user <id>` and the script takes
+the language from that student's `native_lang`, which is what they are speaking;
+letting Whisper auto-detect instead invites it to hear the target language in the
+proper nouns.
 
 ## Step 2 — align transcript to source sentences
 
@@ -66,8 +77,8 @@ Students read in order, so alignment is mostly positional: match on content
 words, sentence by sentence. Three things to watch for, none of which are errors
 in themselves:
 
-- **Merged sentences.** Two Spanish sentences rendered as one English sentence is
-  a legitimate translation choice.
+- **Merged sentences.** Two source sentences rendered as one is a legitimate
+  translation choice.
 - **Skipped sentences.** A whole sentence missing *is* data — silence usually
   means it was hard. Note it and ask, rather than scoring it as wrong.
 - **A summary instead of a translation.** "Basically the guy woke up and it was
@@ -75,7 +86,7 @@ in themselves:
   test. Say plainly which sentences you could not assess from it and offer to
   review a closer reading.
 
-If the student read the *literal gloss* aloud rather than natural English, that is
+If the student read the *literal gloss* aloud rather than natural prose, that is
 decoding, not an error. Say so, and nudge them toward rendering the meaning once
 they have parsed it — the two lines exist for two different stages.
 
@@ -84,32 +95,35 @@ they have parsed it — the two lines exist for two different stages.
 Nothing becomes a finding until it survives both. Read `references/judging.md`
 before this step; it is the substance of the skill.
 
-1. **Microphone or learner?** Whisper mishears. Spoken English has no spelling,
-   so orthography, punctuation, homophones, and phonetically-near substitutions
-   are unfalsifiable and must never be flagged. The single most reliable
+1. **Microphone or learner?** Whisper mishears. Speech has no spelling, so
+   orthography, punctuation, homophones, and phonetically-near substitutions are
+   unfalsifiable and must never be flagged. The single most reliable
    discriminator: a one-off deviation is noise, the *same* deviation three times
    is a finding.
 2. **Different meaning, or just different words?** "He rose early" for "he got up
    early" is correct. Flag only where the meaning diverges or a grammatical
    distinction the lesson was drilling got lost.
 
-Then read `references/languages/es.md` for the traps specific to reading Spanish
-into English — false friends, clitic misreadings, mood and aspect flattening —
-each with the shape of the mistake as it appears in an English transcript.
+Then read `references/languages/<target>-<native>.md` for the traps specific to
+this direction — false friends, clitic misreadings, mood and aspect flattening —
+each with the shape of the mistake as it appears in a transcript. `es-en.md` and
+`fr-es.md` ship; traps are directional, so reading French into Spanish is a
+different catalogue from reading Spanish into English, not a subset of it.
 
 ### The three verdicts
 
-- **Missed** — the meaning is wrong. They read something the Spanish does not say.
+- **Missed** — the meaning is wrong. They read something the source does not say.
 - **Blurred** — the meaning is roughly right but a distinction the lesson was
   drilling has vanished. This is the most valuable category in a focused lesson
-  and the easiest to overlook, because the English usually sounds fine.
-- **Check** — you cannot tell from the English whether they understood, because
-  English does not mark what Spanish marks.
+  and the easiest to overlook, because the rendering usually sounds fine.
+- **Check** — you cannot tell from the rendering whether they understood, because
+  the native language does not mark what the target language marks. The pair file
+  lists which distinctions those are.
 
 That third verdict matters more than it looks. If a lesson drills preterite
-against imperfect and the student says "he told me stories", that is a perfectly
-good rendering of *contaba* — and also of *contó*. You cannot know which they
-read. Guessing produces a false accusation; skipping it wastes the most
+against imperfect and an English-speaking student says "he told me stories", that
+is a perfectly good rendering of *contaba* — and also of *contó*. You cannot know
+which they read. Guessing produces a false accusation; skipping it wastes the most
 diagnostic moment in the lesson. So convert it into a question: *"In sentence 1,
 was that a one-time thing or something that happened repeatedly?"* One question,
 aimed at the ambiguity, answers it honestly.
@@ -133,8 +147,13 @@ what they didn't. Specific, not encouraging-noise.>
 
 **Sentence 4 — missed**
 > You said: "he sold the house to his brother"
-> Spanish: *Le vendió la casa a su hermano.*
+> <Target language>: *Le vendió la casa a su hermano.*
 > Literal: *to-him [he]-sold the house to his brother*
+
+(Headings and labels go in the student's native language — the review is the one
+artifact written entirely in the language they already have, and the app speaks
+its summary aloud with that language's voice. `languages.py` holds the wording
+the app uses, under `ReviewLabels`; match it.)
 
 <What went wrong, in one or two sentences, pointing at the specific word. Then
 the rule it illustrates, and the corrected rendering.>
@@ -181,9 +200,9 @@ harmless but it pads the profile with noise.
 
 ## A note on the other direction
 
-Reviewing the student *speaking Spanish* is a different job, and the app already
-does it — `session_graphs.py` runs `analyze_weaknesses()` over the conversation
-transcript at the end of every session. This skill is specifically for
-comprehension checked through translation into English, which tests something
-that conversation does not: whether they can read closely, rather than infer from
+Reviewing the student *speaking the target language* is a different job, and the
+app already does it — `session_graphs.py` runs `analyze_weaknesses()` over the
+conversation transcript at the end of every session. This skill is specifically
+for comprehension checked through translation into the native language, which
+tests something that conversation does not: whether they can read closely, rather than infer from
 context and keep talking.

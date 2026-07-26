@@ -1,8 +1,14 @@
 # Spanish
 
-Target language Spanish, native language English. Read this alongside
-`references/levels.md`, which sets the text budget and the functions in play at
-each level; this file maps those functions onto Spanish forms.
+Spanish as the **target** language, for a learner of any native language. Read
+this alongside `references/levels.md`, which sets the text budget and the
+functions in play at each level; this file maps those functions onto Spanish
+forms.
+
+What a *particular* native language misreads in Spanish is not here — that is
+directional, and lives in `translation-review/references/languages/es-<native>.md`
+(`es-en.md` ships). The one place the native language shows up below is the
+glossing notes, because the literal line is written in it.
 
 Contents: form inventory by level · focus patterns · glossing notes.
 
@@ -75,8 +81,9 @@ below.
 
 ## Focus patterns
 
-Each entry gives what the story must do structurally, the mistake an English
-speaker reliably makes, and how the gloss should handle it.
+Each entry gives what the story must do structurally, the mistake a learner
+reliably makes, and how the gloss should handle it. Where an error belongs to
+one native language rather than to learners generally, it says so.
 
 ### Past tenses — pretérito vs imperfecto
 
@@ -84,10 +91,11 @@ speaker reliably makes, and how the gloss should handle it.
   broken by a specific event in the preterite. Habitual past (`todos los veranos
   íbamos`) against a single occasion (`aquel verano fuimos`). Several sentences
   should carry both tenses at once.
-- **Error:** English marks this with "used to" and "was ...-ing" or not at all,
-  so learners default to the preterite throughout and narrate without texture.
-  The mirror error is treating the imperfect as "the past tense for
-  descriptions" and using it for completed events.
+- **Error:** learners default to the preterite throughout and narrate without
+  texture. The mirror error is treating the imperfect as "the past tense for
+  descriptions" and using it for completed events. *For English natives:*
+  English marks this only with "used to" and "was ...-ing", or not at all, so
+  there is no habit to transfer.
 - **Glossing:** tag both — `told(impf)` vs `told(pret)` — since the English verb
   is often identical and the tag is the only visible difference. Render the
   imperfect as `used-to-tell` or `was-telling` where aspect is doing real work.
@@ -111,9 +119,10 @@ speaker reliably makes, and how the gloss should handle it.
   counterfactual regret (`si hubiera sabido, no habría ido`). Getting all three
   in makes the sequence-of-tenses pattern visible as a system rather than three
   unrelated rules.
-- **Error:** putting the conditional inside the `si` clause — *si tendría* —
-  which English's "if I would have" actively encourages. The rule worth stating:
-  `si` never takes the conditional or the present subjunctive.
+- **Error:** putting the conditional inside the `si` clause — *si tendría*. The
+  rule worth stating: `si` never takes the conditional or the present
+  subjunctive. *For English natives:* "if I would have" actively encourages the
+  mistake.
 - **Glossing:** tag the subjunctives, since the pattern is a pairing:
   `[I]-had(impf-subj) ... [I]-would-travel`.
 
@@ -123,10 +132,12 @@ speaker reliably makes, and how the gloss should handle it.
   the triggers arise naturally. Contrast is essential — pair `creo que viene`
   with `no creo que venga`, or `cuando llega` (habitual) with `cuando llegue`
   (future). Without the indicative twin the subjunctive looks arbitrary.
-- **Error:** English lost most of its subjunctive, so learners translate word by
-  word and produce `quiero que vienes`. The productive rule isn't a trigger list
-  but the idea that the subjunctive marks a clause as unasserted — wanted,
-  doubted, not yet real.
+- **Error:** learners translate word by word and produce `quiero que vienes`.
+  The productive rule isn't a trigger list but the idea that the subjunctive
+  marks a clause as unasserted — wanted, doubted, not yet real. *For English
+  natives:* English lost most of its subjunctive, so there is nothing to
+  transfer; for natives of a language that keeps one, the trap is instead
+  assuming the triggers line up.
 - **Glossing:** `venga` → `[he]-come(subj)`. The literal line will read as
   broken English, which is correct; glossing `que` as `that` shows the clause
   boundary that licenses the mood.
@@ -158,9 +169,9 @@ speaker reliably makes, and how the gloss should handle it.
   duration, and movement through; `para` for purpose, destination, deadline, and
   recipient. Get a minimal pair in if you can (`lo hice por ti` / `lo hice para
   ti`) — it settles the question faster than any explanation.
-- **Error:** both are "for", so learners guess. Anchor `por` to what came
-  before — cause, reason, route — and `para` to what comes after: goal,
-  endpoint.
+- **Error:** most native languages cover both with a single preposition, so
+  learners guess. Anchor `por` to what came before — cause, reason, route — and
+  `para` to what comes after: goal, endpoint.
 - **Glossing:** `for(cause)` and `for(purpose)`.
 
 ### Object pronouns and clitics
@@ -168,8 +179,9 @@ speaker reliably makes, and how the gloss should handle it.
 - **Force into the story:** dialogue and giving, where indirect and direct
   objects stack. Include `se lo dio`, attachment to infinitives and gerunds
   (`quiero dárselo`), and clitic doubling (`le di el libro a María`).
-- **Error:** English word order (*di le*), and dropping the redundant `le` in
-  doubled constructions, where Spanish requires it.
+- **Error:** putting the pronoun after the verb (*di le*) on the model of the
+  native language, and dropping the redundant `le` in doubled constructions,
+  where Spanish requires it.
 - **Glossing:** the literal line does the work here — `to-him it [I]-gave` shows
   the ordering directly. Hyphenate attached clusters: `dárselo` →
   `to-give-to-him-it`.
@@ -196,17 +208,44 @@ speaker reliably makes, and how the gloss should handle it.
 
 ## Glossing notes
 
-On top of the shared notation in SKILL.md:
+On top of the shared notation in SKILL.md. These hold whatever the literal line
+is written in; the per-native sections below carry the worked examples, because
+a gloss only exists in one language at a time.
 
 - **Dropped subjects are everywhere.** Spanish encodes person in the verb, so
-  most sentences need a bracketed subject: `Fue al mercado.` →
-  `[He] went to-the market.`
+  most sentences need a bracketed subject rather than a silent one.
 - **Contractions** get hyphens: `del` → `of-the`, `al` → `to-the`.
-- **Clitics** keep Spanish order in the literal line even though English cannot:
-  `me lo dio` → `to-me it [he]-gave`.
+- **Clitics** keep Spanish order in the literal line even where the native
+  language cannot put them there.
 - **Punctuation mirrors the Spanish**, including `¿` and `¡`.
-- **Ambiguous `le`** → `to-him/her` unless context has settled it.
-- **Weather and age idioms** stay literal: `hace frío` → `[it]-makes cold`,
-  `tengo veinte años` → `[I]-have twenty years`. This is where the literal line
-  earns its place — a learner who never sees the construction keeps producing
+- **Ambiguous `le`** takes a slash unless context has settled it.
+- **Weather and age idioms stay literal** — `hacer` for weather, `tener` for
+  age. This is where the literal line earns its place: a learner who never sees
+  the construction keeps building it out of the native language's verb.
+
+### Into English
+
+- Dropped subject: `Fue al mercado.` → `[He] went to-the market.`
+- Clitics in Spanish order: `me lo dio` → `to-me it [he]-gave`.
+- Ambiguous `le` → `to-him/her`.
+- Idioms: `hace frío` → `[it]-makes cold`, `tengo veinte años` →
+  `[I]-have twenty years`. A learner who never sees these keeps producing
   *era frío* and *soy veinte*.
+
+Three full worked sentences, showing what the two lines are for:
+
+> **Cuando era niño, mi abuelo me contaba historias del río.**
+> - *Lit.* When [I]-was(impf) boy, my grandfather to-me told(impf) stories of-the river.
+> - *Nat.* When I was a boy, my grandfather used to tell me stories about the river.
+
+> **Se levantó temprano porque hacía frío.**
+> - *Lit.* Himself [he]-raised(pret) early because [it]-made(impf) cold.
+> - *Nat.* He got up early because it was cold.
+
+> **Si tuviera tiempo, le escribiría una carta.**
+> - *Lit.* If [I]-had(impf-subj) time, to-him/her [I]-would-write a letter.
+> - *Nat.* If I had time, I'd write him a letter.
+
+In the second, `hacía frío` becomes "[it]-made cold", not "it was cold". Spanish
+expresses weather with *hacer*, and a learner who never sees that will keep
+saying *era frío*.

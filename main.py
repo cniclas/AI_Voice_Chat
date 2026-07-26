@@ -82,7 +82,7 @@ def resolve_user(arg_user: str | None) -> users.User:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AI Spanish Teacher (terminal UI)")
+    parser = argparse.ArgumentParser(description="AI Language Tutor (terminal UI)")
     parser.add_argument(
         "--user",
         choices=sorted(users.USERS),
@@ -95,7 +95,8 @@ def main():
     session_dir = create_session_dir(user.recordings_dir)
     responses: list[Response] = []  # Track all conversation exchanges
 
-    print(f"AI Spanish Teacher — {user.display_name}")
+    target, native = user.target, user.native
+    print(f"AI Language Tutor — {user.display_name} ({user.pair_label})")
     print(f"Session folder: {session_dir}")
 
     print("Choose how to start:")
@@ -103,7 +104,7 @@ def main():
     print("  2) Today's Wikipedia story")
     mode = resolve_mode(input("Enter 1 or 2 [1]: "))
 
-    profile = curriculum.load_profile(user.profile_path)
+    profile = curriculum.load_profile(user.profile_path, user.target_lang, user.native_lang)
     setup_state = {}
     daily = None
 
@@ -123,14 +124,14 @@ def main():
     print("Whisper ready.\n")
 
     if daily:
-        print(f"\nCuento de hoy: {daily['story_title']}\n\n{daily['story']}\n")
+        print(f"\nToday's story: {daily['story_title']}\n\n{daily['story']}\n")
         print("Reading today's story aloud...")
         time.sleep(0.5)
         try:
             synthesize(
                 f"{daily['story_title']}. {daily['story']}",
-                lang="es",
-                output_file=str(session_dir / "story_es.wav"),
+                lang=target.code,
+                output_file=str(session_dir / f"story_{target.code}.wav"),
                 play=True,
             )
         except Exception as e:
@@ -141,12 +142,18 @@ def main():
 
     llm_history = [
         {"role": "system",
-         "content": build_system_prompt(daily, curriculum.goal_focus(profile))}]
+         "content": build_system_prompt(daily, target.code, native.code,
+                                        curriculum.goal_focus(profile))}]
 
-    print("Press 'e' for English or 's' for Spanish to start recording. Press SPACE to stop. Press 'q' to quit.\n")
+    # Push-to-talk keys for this student's pair, e.g. 'e' English / 's' Español.
+    record_keys = {
+        lang.record_key: (lang.code, lang.endonym) for lang in (native, target)
+    }
+    offer = " or ".join(f"'{key}' for {label}" for key, (_, label) in record_keys.items())
+    print(f"Press {offer} to start recording. Press SPACE to stop. Press 'q' to quit.\n")
 
     while True:
-        result = record_once(RECORDING_PATH)
+        result = record_once(RECORDING_PATH, record_keys)
         if result is None:
             break
 
@@ -198,7 +205,7 @@ def main():
 
     # Conversation finished — produce transcript and lesson
     if not responses:
-        print("No conversation recorded. ¡Hasta luego!")
+        print("No conversation recorded. Goodbye!")
         try:
             session_dir.rmdir()  # Remove the empty session folder
         except OSError:
@@ -208,7 +215,7 @@ def main():
     transcript_path = save_transcript(responses, session_dir)
     print(f"\nTranscript saved to {transcript_path}")
 
-    print("Analyzing your Spanish (this may take a moment)...")
+    print(f"Analyzing your {target.english_name} (this may take a moment)...")
     transcript_text = format_transcript_for_lesson(responses)
     session_analysis_graph.invoke({
         "session_dir": str(session_dir),
@@ -220,7 +227,7 @@ def main():
         "user_id": user.id,
     })
 
-    print("¡Hasta luego!")
+    print("Goodbye!")
 
 
 if __name__ == "__main__":
