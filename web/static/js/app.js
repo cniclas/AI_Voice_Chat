@@ -21,6 +21,11 @@
   const btnExit = document.getElementById('btn-exit');
   const completePanel = document.getElementById('complete-panel');
   const completeLinks = document.getElementById('complete-links');
+  const btnBack = document.getElementById('btn-back');
+  const artifactViewer = document.getElementById('artifact-viewer');
+  const artifactViewerTitle = document.getElementById('artifact-viewer-title');
+  const artifactViewerContent = document.getElementById('artifact-viewer-content');
+  const btnCloseViewer = document.getElementById('btn-close-viewer');
   const loadingIndicator = document.getElementById('loading-indicator');
   let sessionName = null;
 
@@ -91,6 +96,94 @@
 
   function labelFor(code) {
     return code === targetLang.code ? targetLang.label : nativeLang.label;
+  }
+
+  function escapeHtml(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function renderInlineMarkdown(text) {
+    return text
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/`([^`]+?)`/g, '<code>$1</code>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  }
+
+  function renderMarkdown(raw) {
+    const lines = raw.split(/\r?\n/);
+    let html = '';
+    let inList = false;
+    let inCode = false;
+
+    for (const line of lines) {
+      if (line.startsWith('```')) {
+        if (inCode) {
+          html += '</code></pre>';
+          inCode = false;
+        } else {
+          html += '<pre><code>';
+          inCode = true;
+        }
+        continue;
+      }
+
+      if (inCode) {
+        html += escapeHtml(line) + '\n';
+        continue;
+      }
+
+      if (/^#{1,6}\s+/.test(line)) {
+        if (inList) { html += '</ul>'; inList = false; }
+        const level = line.match(/^#+/)[0].length;
+        const text = escapeHtml(line.slice(level + 1));
+        html += `<h${level}>${renderInlineMarkdown(text)}</h${level}>`;
+        continue;
+      }
+
+      if (/^[-*]\s+/.test(line)) {
+        if (!inList) { html += '<ul>'; inList = true; }
+        html += `<li>${renderInlineMarkdown(escapeHtml(line.replace(/^[-*]\s+/, '')))}</li>`;
+        continue;
+      }
+
+      if (line.trim() === '') {
+        if (inList) { html += '</ul>'; inList = false; }
+        continue;
+      }
+
+      html += `<p>${renderInlineMarkdown(escapeHtml(line))}</p>`;
+    }
+
+    if (inList) html += '</ul>';
+    return html;
+  }
+
+  function showMarkdownViewer(url, title) {
+    if (!sessionName) return;
+    artifactViewerTitle.textContent = title;
+    artifactViewerContent.innerHTML = 'Loading…';
+    artifactViewer.hidden = false;
+    fetch(url)
+      .then((res) => {
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.text();
+      })
+      .then((text) => {
+        artifactViewerContent.innerHTML = renderMarkdown(text);
+      })
+      .catch((err) => {
+        artifactViewerContent.textContent = `Could not load file: ${err.message}`;
+      });
+  }
+
+  function closeMarkdownViewer() {
+    artifactViewer.hidden = true;
+    artifactViewerContent.innerHTML = '';
   }
 
   // Put the pair on the buttons (and in the challenge blurb) once the server
@@ -183,12 +276,30 @@
     if (!sessionName) return;
     const div = document.createElement('div');
     div.className = 'msg msg--artifact';
-    const a = document.createElement('a');
-    a.href = `/session/${sessionName}/${encodeURIComponent(filename)}`;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.textContent = label || filename;
-    div.appendChild(a);
+    const link = document.createElement('a');
+    link.href = `/session/${sessionName}/${encodeURIComponent(filename)}`;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = label || filename;
+    div.appendChild(link);
+
+    if (filename.endsWith('.md')) {
+      const actions = document.createElement('div');
+      actions.className = 'artifact-actions';
+      const viewButton = document.createElement('button');
+      viewButton.type = 'button';
+      viewButton.className = 'artifact-view-btn';
+      viewButton.textContent = 'View in app';
+      viewButton.addEventListener('click', () => {
+        showMarkdownViewer(
+          `/session/${sessionName}/${encodeURIComponent(filename)}`,
+          label || filename,
+        );
+      });
+      actions.appendChild(viewButton);
+      div.appendChild(actions);
+    }
+
     chatLog.appendChild(div);
     chatLog.scrollTop = chatLog.scrollHeight;
   }
@@ -232,6 +343,7 @@
 
   inputSelect.addEventListener('change', () => AudioCapture.setInputDevice(inputSelect.value));
   outputSelect.addEventListener('change', () => AudioPlayback.setOutputDevice(outputSelect.value));
+  btnCloseViewer.addEventListener('click', closeMarkdownViewer);
 
   function connect() {
     ws = new WebSocket(`ws://${location.host}/ws/session?user=${encodeURIComponent(selectedUserId)}`);
@@ -277,15 +389,31 @@
     chatPanel.hidden = true;
     controls.hidden = true;
     completePanel.hidden = true;
+    artifactViewer.hidden = true;
     chatLog.innerHTML = '';
     recording = false;
     lastAssistantAudio = null;
     stage = 'converse';
     translateLang = null;
     idlePrompt = 'Your turn — press a language button and speak.';
-    enableRecordButtons();
     btnStop.disabled = true;
     btnExit.disabled = false;
+    enableRecordButtons();
+
+    if (selectedUserId) {
+      userPicker.hidden = true;
+      sessionSetup.hidden = false;
+      statusText.textContent = 'Ready. Pick how you want to start.';
+      phaseBadge.textContent = 'ready';
+      loadingIndicator.hidden = !wsOpen();
+    } else {
+      userPicker.hidden = false;
+      sessionSetup.hidden = true;
+      statusText.textContent = 'Who is practicing today?';
+      phaseBadge.textContent = 'select user';
+      loadingIndicator.hidden = true;
+    }
+
     updateLandingState();
   }
 
@@ -410,24 +538,39 @@
     phaseBadge.textContent = 'done';
 
     completeLinks.innerHTML = '';
-    function addLink(href, text) {
+    function addLink(href, text, canView) {
       const wrap = document.createElement('div');
       const a = document.createElement('a');
       a.href = href;
       a.textContent = text;
       a.target = '_blank';
+      a.rel = 'noopener';
       wrap.appendChild(a);
+      if (canView) {
+        const viewButton = document.createElement('button');
+        viewButton.type = 'button';
+        viewButton.className = 'artifact-view-btn';
+        viewButton.textContent = 'View in app';
+        viewButton.addEventListener('click', () => {
+          showMarkdownViewer(href, text);
+        });
+        wrap.appendChild(viewButton);
+      }
       completeLinks.appendChild(wrap);
     }
     const artifacts = [
-      [msg.transcript_filename, 'Open transcript'],
-      [msg.lesson_filename, 'Open lesson (story + literal translation)'],
-      [msg.review_filename, 'Open translation review'],
-      [msg.homework_filename, 'Open homework'],
+      [msg.transcript_filename, 'Transcript', true],
+      [msg.lesson_filename, 'Lesson (story + literal translation)', false],
+      [msg.review_filename, 'Translation review', false],
+      [msg.homework_filename, 'Homework', true],
     ];
-    artifacts.forEach(([filename, label]) => {
+    artifacts.forEach(([filename, label, canView]) => {
       if (msg.session_name && filename) {
-        addLink(`/session/${msg.session_name}/${encodeURIComponent(filename)}`, label);
+        addLink(
+          `/session/${msg.session_name}/${encodeURIComponent(filename)}`,
+          label,
+          canView,
+        );
       }
     });
     if (!msg.transcript_filename) {
@@ -531,6 +674,17 @@
     if (!wsOpen()) return;
     ws.send(JSON.stringify({ type: 'end_session' }));
     btnExit.disabled = true;
+  });
+  btnBack.addEventListener('click', () => {
+    if (wsOpen()) {
+      sessionFinished = true;
+      backendReady = false;
+      ws.close();
+      ws = null;
+    }
+    resetToLanding();
+    sessionFinished = false;
+    if (selectedUserId) connect();
   });
 
   updateLandingState();
