@@ -168,6 +168,15 @@ class SessionOrchestrator:
             self.session_dir = create_session_dir(self.user.recordings_dir)
             self.session_name = f"{self.user.id}/{self.session_dir.name}"
 
+    def _goal_focus(self) -> str | None:
+        """The student's active focus goal, for the tutor's system prompt.
+
+        Safe before the profile has loaded — the talk path builds its prompt
+        immediately after loading, but the degraded challenge path can reach
+        here with `self.profile` still None.
+        """
+        return curriculum.goal_focus(self.profile) if self.profile else None
+
     def _progress_reporter(self):
         """A thread-safe `progress(done, total, label)` for the lesson build,
         which runs in a worker thread but wants to push status lines onto the
@@ -199,7 +208,8 @@ class SessionOrchestrator:
         self._ensure_session_dir()
         if self.profile is None:
             self.profile = await asyncio.to_thread(curriculum.load_profile, self.user.profile_path)
-        self.llm_history = [{"role": "system", "content": build_system_prompt(None)}]
+        self.llm_history = [
+            {"role": "system", "content": build_system_prompt(None, self._goal_focus())}]
         await self._send("mode", mode="talk", session_name=self.session_name)
         await self._status("idle", _PROMPT_TO_SPEAK)
 
@@ -228,7 +238,8 @@ class SessionOrchestrator:
             # rather than leaving the user on a dead screen.
             await self._send("error", message=self.setup_state.get(
                 "setup_failed", "Today's challenge could not be built."))
-            self.llm_history = [{"role": "system", "content": build_system_prompt(None)}]
+            self.llm_history = [
+                {"role": "system", "content": build_system_prompt(None, self._goal_focus())}]
             await self._set_stage("converse", _PROMPT_TO_SPEAK)
             await self._status("idle", _PROMPT_TO_SPEAK)
             return
@@ -236,7 +247,8 @@ class SessionOrchestrator:
         # The tutor can already answer questions about the story; the review is
         # folded into the prompt once it exists.
         self.llm_history = [
-            {"role": "system", "content": build_challenge_system_prompt(self.lesson, None)}]
+            {"role": "system",
+             "content": build_challenge_system_prompt(self.lesson, None, self._goal_focus())}]
 
         await self._status("speaking", "Reading today's story aloud…")
         await asyncio.to_thread(
@@ -385,7 +397,9 @@ class SessionOrchestrator:
 
         # The tutor now answers questions with the findings in hand.
         self.llm_history = [
-            {"role": "system", "content": build_challenge_system_prompt(self.lesson, self.review)}]
+            {"role": "system",
+             "content": build_challenge_system_prompt(
+                 self.lesson, self.review, self._goal_focus())}]
 
         # Stage first, so the client already knows the right idle prompt by the
         # time the review audio finishes playing.

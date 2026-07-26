@@ -139,7 +139,9 @@ def main():
     else:
         print("(No Wikipedia story available today — starting a plain conversation.)")
 
-    llm_history = [{"role": "system", "content": build_system_prompt(daily)}]
+    llm_history = [
+        {"role": "system",
+         "content": build_system_prompt(daily, curriculum.goal_focus(profile))}]
 
     print("Press 'e' for English or 's' for Spanish to start recording. Press SPACE to stop. Press 'q' to quit.\n")
 

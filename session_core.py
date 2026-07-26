@@ -63,6 +63,17 @@ REVIEW_CONTEXT_TEMPLATE = (
     "No repitas la corrección entera; el estudiante ya la tiene delante."
 )
 
+# The tutor is told what the student is working toward, not told to drill it.
+# Corrections mid-conversation are explicitly off the table in the base prompt
+# (they happen in the analysis phase), so the only useful thing a goal can do
+# here is shape the questions asked — steering the student into situations that
+# need the structure is what produces evidence of whether they have it.
+GOAL_CONTEXT_TEMPLATE = (
+    "\n\nEl estudiante está trabajando específicamente en: {goal}. Orienta tus "
+    "preguntas hacia situaciones que requieran esa estructura, de forma natural. "
+    "Sigue sin corregir errores en medio de la conversación."
+)
+
 CONTEXT_EXTRACT_CHARS = 1200  # article extract length embedded in the system prompt
 
 LANG_REMINDER = {
@@ -158,19 +169,28 @@ def format_transcript_for_lesson(responses: list[Response]) -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt(daily: dict | None) -> str:
+def _goal_context(goal: str | None) -> str:
+    return GOAL_CONTEXT_TEMPLATE.format(goal=goal) if goal else ""
+
+
+def build_system_prompt(daily: dict | None, goal: str | None = None) -> str:
     """Build the LLM system prompt: story-framed if a daily story was
-    prepared, otherwise the base conversational prompt."""
+    prepared, otherwise the base conversational prompt.
+
+    `goal` is the student's active focus goal, if they have one; it is optional
+    so callers without a profile in hand keep working unchanged.
+    """
     if not daily:
-        return BASE_SYSTEM_PROMPT
+        return BASE_SYSTEM_PROMPT + _goal_context(goal)
     return STORY_SYSTEM_PROMPT_TEMPLATE.format(
         article_title=daily["article_title"],
         article_extract=daily["article_extract"][:CONTEXT_EXTRACT_CHARS],
         story=daily["story"],
-    )
+    ) + _goal_context(goal)
 
 
-def build_challenge_system_prompt(lesson: dict, review: dict | None) -> str:
+def build_challenge_system_prompt(lesson: dict, review: dict | None,
+                                  goal: str | None = None) -> str:
     """System prompt for the conversation that follows a translation challenge.
 
     The tutor gets the story and the review findings, so "why is it *le* there"
@@ -191,7 +211,7 @@ def build_challenge_system_prompt(lesson: dict, review: dict | None) -> str:
         story_title=lesson.get("title", ""),
         story=lesson.get("story", ""),
         review_context=review_context,
-    )
+    ) + _goal_context(goal)
 
 
 def daily_story_from_setup_state(setup_state: dict) -> dict | None:
