@@ -6,7 +6,8 @@ bottom, the browser session is *command-driven*. On connect the orchestrator
 only signals readiness; nothing happens until the user picks an entry point:
 
 - ``start_talk``      — a plain push-to-talk conversation, no story preamble.
-- ``start_challenge`` — today's translation challenge.
+- ``start_challenge`` — today's translation challenge, in either direction
+  (``direction: "into_native" | "into_target"``).
 
 The translation challenge is the browser's replacement for the old "Wikipedia
 story" entry point, and it runs the written-practice loop end to end:
@@ -16,10 +17,14 @@ story" entry point, and it runs the written-practice loop end to end:
    sentence-by-sentence literal and natural translation that serves as the
    answer key (`translation_challenge.build_lesson`, the local-model port of
    the `language-lesson` skill);
-2. the Spanish story is read aloud once, exactly like the old story mode;
-3. the student translates it back into English out loud, and that turn is
-   marked against the answer key (`translation_challenge.review_translation`,
-   the port of the `translation-review` skill);
+2. one side of that lesson is read aloud once, exactly like the old story mode:
+   the target-language story, or — in the reverse direction — its natural
+   translation into the language the student already has;
+3. the student says it back in the other language, and that turn is marked
+   against the answer key (`translation_challenge.review_translation`, the port
+   of the `translation-review` skill). Reading the story into their own
+   language is a comprehension check; saying it back in the language they are
+   learning is a production check, and the review says so;
 4. push-to-talk then continues normally, with the story and the review in the
    tutor's system prompt so follow-up questions can be answered from the text
    the student just worked through;
@@ -39,6 +44,7 @@ import requests
 from fastapi import WebSocket, WebSocketDisconnect
 
 import curriculum
+import languages
 import translation_challenge
 from tts import synthesize
 from session_graphs import session_setup_graph, session_analysis_graph
@@ -56,8 +62,12 @@ from session_core import (
 
 _PROMPT_TO_SPEAK = "Your turn — press a language button and speak."
 _PROMPT_TO_TRANSLATE_TEMPLATE = (
-    "Your turn to translate — press 🎙 {native} and say what the story means, "
+    "Your turn to translate — press 🎙 {spoken} and say what the story means, "
     "sentence by sentence."
+)
+_PROMPT_TO_PRODUCE_TEMPLATE = (
+    "Your turn to translate — press 🎙 {spoken} and say the story back in "
+    "{spoken}, sentence by sentence."
 )
 
 LESSON_FILENAME = "lesson.md"
@@ -85,6 +95,7 @@ class SessionOrchestrator:
         self.lesson: dict | None = None
         self.review: dict | None = None
         self.mode: str | None = None  # "talk" or "challenge" once a session starts
+        self.direction: str = translation_challenge.INTO_NATIVE
         # "translate" while the challenge is waiting for the spoken
         # translation, "converse" for ordinary push-to-talk turns.
         self.stage: str = "converse"
@@ -94,8 +105,11 @@ class SessionOrchestrator:
         # the review is written in) reads off these rather than assuming es/en.
         self.target = user.target
         self.native = user.native
+        # Which language the spoken translation has to be in. Set for real when
+        # a challenge starts; the default is the reading direction's.
+        self.translate_lang = self.native.code
         self.prompt_to_translate = _PROMPT_TO_TRANSLATE_TEMPLATE.format(
-            native=self.native.endonym)
+            spoken=self.native.endonym)
 
     async def _send(self, type_: str, **payload):
         await self.ws.send_json({"type": type_, **payload})
@@ -104,13 +118,14 @@ class SessionOrchestrator:
         """Push a combined avatar-state + human-readable status line."""
         await self._send("status", state=state, message=message)
 
-    async def _set_stage(self, stage: str, prompt: str):
+    async def _set_stage(self, stage: str, prompt: str, language: str | None = None):
         """Tell the client which turn it is: translating the story, or talking
-        freely. The client uses this to steer the language buttons — the
-        translation has to be in English — and to keep the right idle prompt on
-        screen after audio finishes playing."""
+        freely. The client uses this to steer the language buttons — during a
+        translation only the language being translated *into* is pressable, and
+        which one that is depends on the challenge's direction — and to keep the
+        right idle prompt on screen after audio finishes playing."""
         self.stage = stage
-        await self._send("stage", stage=stage, prompt=prompt)
+        await self._send("stage", stage=stage, prompt=prompt, language=language)
 
     async def run(self):
         try:
@@ -152,7 +167,7 @@ class SessionOrchestrator:
                 if msg_type == "start_talk":
                     await self._start_talk()
                 else:
-                    await self._start_challenge()
+                    await self._start_challenge(message.get("direction"))
             elif msg_type == "user_audio":
                 if self.mode is None:
                     # The header is always followed by one binary frame;
@@ -193,10 +208,12 @@ class SessionOrchestrator:
         return build_system_prompt(
             None, self.target.code, self.native.code, self._goal_focus())
 
-    def _story_filename(self) -> str:
+    def _story_filename(self, language: str) -> str:
         """Narration lands in the session folder named for the language it is
-        in, so a folder is self-describing when the demo replays it later."""
-        return f"story_{self.target.code}.wav"
+        in, so a folder is self-describing when the demo replays it later. In
+        the reverse challenge that is the student's own language, since that is
+        the side they are read."""
+        return f"story_{language}.wav"
 
     def _progress_reporter(self):
         """A thread-safe `progress(done, total, label)` for the lesson build,
@@ -236,21 +253,32 @@ class SessionOrchestrator:
         await self._send("mode", mode="talk", session_name=self.session_name)
         await self._status("idle", _PROMPT_TO_SPEAK)
 
-    async def _start_challenge(self):
+    async def _start_challenge(self, direction: str | None = None):
         """Today's translation challenge: build the lesson from Wikipedia,
-        narrate the Spanish story, then wait for the spoken translation."""
+        narrate the side the student works from, then wait for the spoken
+        translation.
+
+        `direction` picks which side that is — the target-language story to be
+        understood, or its native-language translation to be said back. An
+        unknown value falls back to the reading direction rather than failing
+        the session on a typo in a client message.
+        """
         if self.mode is not None:
             return
         self.mode = "challenge"
+        if direction in translation_challenge.DIRECTIONS:
+            self.direction = direction
         self._ensure_session_dir()
-        await self._send("mode", mode="challenge", session_name=self.session_name)
+        await self._send("mode", mode="challenge", session_name=self.session_name,
+                         direction=self.direction)
 
         await self._status(
             "thinking",
             "Fetching today's Wikipedia article and building your translation challenge…")
         self.setup_state = await asyncio.to_thread(
             session_setup_graph.invoke,
-            {"session_dir": str(self.session_dir), "mode": "challenge", "user_id": self.user.id},
+            {"session_dir": str(self.session_dir), "mode": "challenge",
+             "direction": self.direction, "user_id": self.user.id},
             {"configurable": {"progress": self._progress_reporter()}},
         )
         self.profile = self.setup_state["profile"]
@@ -275,32 +303,43 @@ class SessionOrchestrator:
                  self.lesson, None, self.target.code, self.native.code,
                  self._goal_focus())}]
 
+        # One side of the lesson is read aloud; the student produces the other.
+        prompt = translation_challenge.prompt_side(self.lesson)
+        self.translate_lang = translation_challenge.speak_lang(self.lesson)
+        template = (_PROMPT_TO_PRODUCE_TEMPLATE
+                    if self.direction == translation_challenge.INTO_TARGET
+                    else _PROMPT_TO_TRANSLATE_TEMPLATE)
+        self.prompt_to_translate = template.format(
+            spoken=languages.get(self.translate_lang).endonym)
+
+        story_filename = self._story_filename(prompt["lang"])
         await self._status("speaking", "Reading today's story aloud…")
         await asyncio.to_thread(
             synthesize,
-            f"{self.lesson['title']}. {self.lesson['story']}",
-            lang=self.target.code,
-            output_file=str(self.session_dir / self._story_filename()),
+            f"{prompt['title']}. {prompt['text']}",
+            lang=prompt["lang"],
+            output_file=str(self.session_dir / story_filename),
             play=False,
         )
         # The story arrives as a normal assistant chat bubble, so it gets the
         # same audio control as every other reply. Sent only after synthesize()
-        # has written story_<target>.wav: the bubble's audio element is the single
+        # has written story_<lang>.wav: the bubble's audio element is the single
         # playback source, and it fetches that file from the session route.
         # tts_audio is just the auto-play cue.
         await self._send(
             "transcript",
             author="assistant",
-            language=self.target.code,
-            text=f"{self.lesson['title']}\n\n{self.lesson['story']}",
-            audio_filename=self._story_filename(),
+            language=prompt["lang"],
+            text=f"{prompt['title']}\n\n{prompt['text']}",
+            audio_filename=story_filename,
         )
         await self._send("tts_audio", turn="story")
         await self._wait_for("tts_playback_done")
 
         # lesson.md carries the answer key, so it is deliberately not linked
         # until the translation has been marked.
-        await self._set_stage("translate", self.prompt_to_translate)
+        await self._set_stage("translate", self.prompt_to_translate,
+                              language=self.translate_lang)
         await self._status("idle", self.prompt_to_translate)
 
     # -- Per-turn conversation ----------------------------------------------
@@ -342,11 +381,11 @@ class SessionOrchestrator:
         )
 
         if self.stage == "translate":
-            if language == self.native.code:
+            if language == self.translate_lang:
                 await self._mark_translation(user_text)
                 return
-            # Answering in the target language means the student has moved on
-            # from the translation; take them at their word and just talk.
+            # Speaking the other language means the student has moved on from
+            # the translation; take them at their word and just talk.
             await self._set_stage("converse", _PROMPT_TO_SPEAK)
 
         await self._reply_to(user_text, language)

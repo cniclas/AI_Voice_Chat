@@ -35,6 +35,11 @@ class LessonHeadings:
     speaking: str
     literal: str
     note: str
+    # Heading for the native-language prose in a reverse challenge — the text
+    # the student hears and has to say back in the target language. Only that
+    # direction renders it, but it is a lesson heading like the rest, so it is
+    # written in the target language too.
+    to_translate: str
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,10 @@ class ReviewLabels:
     source: str           # label for the original-language line
     literal: str
     better: str
+    # Reverse direction only: the student produced the target language, so the
+    # line quoted back at them is the rendering they were aiming for, not the
+    # text they were reading.
+    model_answer: str
     missed: str
     blurred: str
     check: str            # the "worth checking" verdict, inline
@@ -95,13 +104,13 @@ LANGUAGES: dict[str, Language] = {
             level="Level", focus="Focus", story="Story",
             aligned="Aligned reading", notes="Grammar notes",
             vocabulary="Vocabulary", speaking="To talk about",
-            literal="Literal", note="Note",
+            literal="Literal", note="Note", to_translate="To translate",
         ),
         review_labels=ReviewLabels(
             heading="Translation review", what_to_fix="What to fix",
             worth_checking="Worth checking", holding_up="Holding up well",
             sentence="Sentence", you_said="You said", source="Source",
-            literal="Literal", better="Better",
+            literal="Literal", better="Better", model_answer="Model answer",
             missed="missed", blurred="blurred", check="worth checking",
             spoken_main="The main thing to look at is sentence {n}.",
             spoken_more="There are {n} more notes written up for you.",
@@ -125,13 +134,13 @@ LANGUAGES: dict[str, Language] = {
             level="Nivel", focus="Enfoque", story="Historia",
             aligned="Lectura alineada", notes="Notas de gramática",
             vocabulary="Vocabulario", speaking="Para hablar",
-            literal="Literal", note="Nota",
+            literal="Literal", note="Nota", to_translate="Para traducir",
         ),
         review_labels=ReviewLabels(
             heading="Corrección de la traducción", what_to_fix="Qué corregir",
             worth_checking="Para comprobar", holding_up="Lo que va bien",
             sentence="Frase", you_said="Dijiste", source="Original",
-            literal="Literal", better="Mejor",
+            literal="Literal", better="Mejor", model_answer="Respuesta modelo",
             missed="error de sentido", blurred="matiz perdido",
             check="para comprobar",
             spoken_main="Lo principal está en la frase {n}.",
@@ -156,13 +165,13 @@ LANGUAGES: dict[str, Language] = {
             level="Niveau", focus="Objectif", story="Histoire",
             aligned="Lecture alignée", notes="Notes de grammaire",
             vocabulary="Vocabulaire", speaking="Pour parler",
-            literal="Littéral", note="Note",
+            literal="Littéral", note="Note", to_translate="À traduire",
         ),
         review_labels=ReviewLabels(
             heading="Correction de la traduction", what_to_fix="À corriger",
             worth_checking="À vérifier", holding_up="Ce qui tient bien",
             sentence="Phrase", you_said="Tu as dit", source="Original",
-            literal="Littéral", better="Mieux",
+            literal="Littéral", better="Mieux", model_answer="Réponse modèle",
             missed="contresens", blurred="nuance perdue", check="à vérifier",
             spoken_main="L'essentiel se trouve dans la phrase {n}.",
             spoken_more="Il y a {n} autres remarques écrites pour toi.",

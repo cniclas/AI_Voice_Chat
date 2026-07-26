@@ -44,6 +44,7 @@ class SessionState(TypedDict, total=False):
     session_dir: str            # str (not Path) so the state stays serializable
     user_id: str
     mode: str                   # "story" (default) or "challenge"
+    direction: str              # challenge mode: which way the student translates
     profile: dict
     candidates: list
     article: dict
@@ -134,7 +135,10 @@ def generate_story_node(state: SessionState) -> dict:
 
 def build_lesson_node(state: SessionState, config: RunnableConfig | None = None) -> dict:
     """Translation-challenge branch: a graded lesson whose aligned literal
-    translation doubles as the answer key the review marks against.
+    translation doubles as the answer key the review marks against — for the
+    story read into the student's own language, or, with
+    ``direction="into_target"``, for the same story said back in the language
+    they are learning.
 
     The progress callback comes in through the run config rather than the
     state, since it is a live callable belonging to one caller (the WebSocket
@@ -147,7 +151,9 @@ def build_lesson_node(state: SessionState, config: RunnableConfig | None = None)
     try:
         lesson = translation_challenge.build_lesson(
             state["article"]["title"], state["article_extract"], profile,
-            *_langs(state), progress=progress)
+            *_langs(state),
+            direction=state.get("direction") or translation_challenge.INTO_NATIVE,
+            progress=progress)
     except (requests.RequestException, ValueError, KeyError) as e:
         return {"setup_failed": f"lesson generation failed: {e}"}
     return {
@@ -292,6 +298,7 @@ def record_practice_node(state: SessionState) -> dict:
         level=lesson.get("level"),
         topic=story.get("title"),
         translated=state.get("review") is not None,
+        direction=lesson.get("direction"),
         spoken_turns=state.get("spoken_turns", 0),
     )
     user = users.get_user(state["user_id"])

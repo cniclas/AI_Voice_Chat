@@ -6,7 +6,7 @@
   <title>AI Language Tutor</title>
   <!-- The ?v= suffix busts stale browser caches whenever the frontend/protocol
        changes together; bump it on breaking asset changes. -->
-  <link rel="stylesheet" href="/static/css/app.css?v=4">
+  <link rel="stylesheet" href="/static/css/app.css?v=5">
 </head>
 <body>
   <header>
@@ -60,6 +60,9 @@
           <button id="btn-challenge" class="entry-btn" type="button" disabled>📝 Translation challenge
             <span id="challenge-sub" class="entry-sub">Hear today's story, translate it aloud into your own language, get it marked — then keep talking</span>
           </button>
+          <button id="btn-challenge-reverse" class="entry-btn" type="button" disabled>🔁 Reverse challenge
+            <span id="challenge-reverse-sub" class="entry-sub">Hear today's story in your own language, say it back in the one you're learning, get it marked</span>
+          </button>
         </div>
       </div>
     </section>
@@ -87,8 +90,8 @@
 
   <audio id="player"></audio>
 
-  <script src="/static/js/audio-playback.js?v=4"></script>
-  <script src="/static/js/audio-capture.js?v=4"></script>
-  <script src="/static/js/app.js?v=4"></script>
+  <script src="/static/js/audio-playback.js?v=5"></script>
+  <script src="/static/js/audio-capture.js?v=5"></script>
+  <script src="/static/js/app.js?v=5"></script>
 </body>
 </html>

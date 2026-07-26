@@ -629,7 +629,8 @@ def record_article_covered(profile: dict, title: str, session_name: str) -> None
 
 def record_practice(profile: dict, session_name: str, mode: str, *, focus: str | None = None,
                     level: str | None = None, topic: str | None = None,
-                    translated: bool = False, spoken_turns: int = 0) -> None:
+                    translated: bool = False, direction: str | None = None,
+                    spoken_turns: int = 0) -> None:
     """Append what this session actually practiced to the student's track
     record, and keep a running tally per grammar focus.
 
@@ -637,6 +638,10 @@ def record_practice(profile: dict, session_name: str, mode: str, *, focus: str |
     worked on, which is the other half of the picture — it is what lets a
     reader (or a future prompt) see that the subjunctive has been drilled four
     times and `por`/`para` never.
+
+    `direction` is which way a translation challenge went (`into_native` for
+    reading, `into_target` for producing). Two sessions on the same focus are
+    not the same practice if one only ever asked the student to understand it.
     """
     today = date.today().isoformat()
     log = profile.setdefault("practice_log", [])
@@ -648,6 +653,7 @@ def record_practice(profile: dict, session_name: str, mode: str, *, focus: str |
         "level": level,
         "topic": topic,
         "translated": translated,
+        "direction": direction,
         "spoken_turns": spoken_turns,
     })
     profile["practice_log"] = log[-60:]
