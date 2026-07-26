@@ -88,7 +88,8 @@ The browser's second entry point — replacing the old "today's Wikipedia story"
 
 ## Skills
 
-Two Claude-run skills form a written-practice loop alongside the spoken session pipeline:
+Three Claude-run skills sit alongside the spoken session pipeline. Two of them form a
+written-practice loop:
 `language-lesson` produces a graded story, the student reads their English translation of it
 aloud, and `translation-review` marks that translation. Both run on Claude rather than the
 local Ollama model, and both read and write the same per-user `recordings/<user>/student_profile.json`
@@ -140,10 +141,39 @@ live session would produce; `scripts/record_review.py` merges findings into the 
 `curriculum.merge_analysis_into_profile()` rather than hand-editing the JSON, keeping the
 `occurrences` tally consistent with the session pipeline's.
 
+### progress-review
+
+`.claude/skills/progress-review/` reads the whole accumulated profile rather than one
+session, reports on long-term progress, and maintains the goals that steer what the app
+generates next. It exists because the profile is **append-only**: `occurrences` only ever
+increments and nothing ever marks a weakness resolved, so a raw count cannot distinguish
+"failing this every session" from "fixed in April". Progress is legible here only as
+*recency measured against exposure* — did the student get chances to make this mistake, and
+did they stop? — which separates improving from stuck from never-tested. The second thing it
+computes is the blind spot: a weakness whose free-text topic doesn't stem-match any focus
+name is invisible to `skill_refs.pick_focus()` forever, so it accumulates occurrences and is
+never chosen. `references/reading-the-profile.md` holds that reasoning;
+`references/goals.md` holds the goal schema and what makes a goal measurable.
+
+Goals live in a `goals` key inside the same `student_profile.json`, written only by this
+skill — `save_profile()` dumps the whole dict and the session pipeline's writers only touch
+their own keys, so the block round-trips untouched. Three parts of the app read it:
+`skill_refs.pick_focus()` returns an active focus goal outright (ahead of its usual
+stem-matching), `curriculum.top_vocab_to_practice()` promotes goal words into the generated
+story even if the profile has never logged them, and `session_core`'s system prompts steer
+conversation toward the structure. `profile["level"]` is written by nothing in the codebase —
+this skill is the only thing that moves it, judged against `language-lesson`'s `levels.md`.
+
+`scripts/progress_snapshot.py` does the aggregation (sessions since a weakness was last seen,
+how many of those were focused or substantial, the focus-versus-weakness join, binding
+truncation ceilings); `scripts/record_goals.py` validates and writes the goals block, and
+rejects a focus goal naming a focus the language file doesn't document — that mistake is
+otherwise silent, and the goal would simply never influence a lesson.
+
 ## Key constraints
 
 - Only two languages are supported: `"en"` and `"es"`. The language selection happens at record time and flows through the entire pipeline; the tutor mirrors it per turn (fixed from an earlier bug where it always replied in Spanish).
 - `kokoro/tts.py` loads a `KPipeline` per language at module level, which downloads Kokoro-82M weights from Hugging Face on first run if they aren't already cached; a cold first import can take a while on a slow connection.
 - `audio_recorder/` has its own `venv` and `requirements.txt` that is separate from the root venv; the root `requirements.txt` uses `pyaudio` instead. It's only used by the terminal UI — the browser UI captures audio client-side.
-- `recordings/<user>/student_profile.json` (one per user — `niclas` or `alejandra`, as defined in `users.py`) is the one piece of cross-session state; it's gitignored (personal learning data) along with the rest of `recordings/`.
+- `recordings/<user>/student_profile.json` (one per user — `niclas` or `alejandra`, as defined in `users.py`) is the one piece of cross-session state; it's gitignored (personal learning data) along with the rest of `recordings/`. Every list in it is capped (`weaknesses` at 30 by occurrences, `practice_log`/`articles_covered` at 60 by recency, `vocab_to_practice` at 40), so an entry can fall off the end — absence is not evidence it was resolved.
 - The browser UI's output-device picker relies on `HTMLMediaElement.setSinkId()`, which is Chromium-only as of writing (Chrome/Edge); other browsers fall back to the system default output device.

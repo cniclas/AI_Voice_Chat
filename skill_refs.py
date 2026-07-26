@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+import curriculum
+
 _ROOT = Path(__file__).resolve().parent
 SKILLS_ROOT = _ROOT / ".claude" / "skills"
 
@@ -173,16 +175,30 @@ def glossing_notes(lang: str = "es") -> str:
 def pick_focus(profile: dict, lang: str = "es") -> str:
     """Choose the grammar focus for today's lesson from the student's profile.
 
-    The skill's own instruction is to "pull the top recurring weakness from the
-    student profile"; matching is done here rather than by the LLM so the same
-    profile always yields the same focus. Weakness topics are free text written
-    by an earlier analysis pass ("preterite vs imperfect"), so tokens are
-    compared by stem — enough to bridge English/Spanish spellings of the same
-    grammatical term without pulling in a stemmer.
+    An active focus goal wins outright: the student (with the progress-review
+    skill) decided what to work on, and that intention should outrank whatever
+    the last analysis pass happened to flag hardest. Only the goal's focus name
+    is trusted, and only when this language documents a pattern for it — a goal
+    naming something `focus_pattern()` can't resolve would otherwise degrade the
+    lesson prompt silently.
+
+    Failing that, the skill's own instruction is to "pull the top recurring
+    weakness from the student profile"; matching is done here rather than by the
+    LLM so the same profile always yields the same focus. Weakness topics are
+    free text written by an earlier analysis pass ("preterite vs imperfect"), so
+    tokens are compared by stem — enough to bridge English/Spanish spellings of
+    the same grammatical term without pulling in a stemmer.
     """
     names = focus_names(lang)
     if not names:
         return DEFAULT_FOCUS
+
+    goal = curriculum.goal_focus(profile)
+    if goal:
+        wanted = _normalize(goal)
+        for name in names:
+            if _normalize(name) == wanted:
+                return name
 
     tokenized = [(name, set(_normalize(name).split())) for name in names]
     ranked = sorted(profile.get("weaknesses", []),

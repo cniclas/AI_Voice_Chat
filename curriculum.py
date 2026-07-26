@@ -261,12 +261,78 @@ STORY_SCHEMA = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Goals — what the student is deliberately working toward
+# ---------------------------------------------------------------------------
+#
+# `weaknesses` is written by the analysis pass: it says what the student got
+# wrong, reactively. `goals` is written by the progress-review skill and says
+# what they decided to fix, which is the only part of the profile that reflects
+# an intention rather than an observation. Everything here degrades to "no
+# goals" on a profile that predates the key, which is every existing one.
+
+def active_goals(profile: dict, kind: str | None = None) -> list[dict]:
+    """Goals still being worked on, optionally filtered to one kind."""
+    goals = (profile.get("goals") or {}).get("active", [])
+    return [
+        g for g in goals
+        if isinstance(g, dict)
+        and g.get("status", "active") == "active"
+        and (kind is None or g.get("kind") == kind)
+    ]
+
+
+def goal_focus(profile: dict) -> str | None:
+    """The grammar focus the student is currently working toward, if any.
+
+    Returns the canonical focus name (as spelled in the language-lesson skill's
+    `Focus patterns` headings) so `skill_refs.pick_focus()` can match it.
+    """
+    for goal in active_goals(profile, "focus"):
+        focus = (goal.get("focus") or "").strip()
+        if focus:
+            return focus
+    return None
+
+
+def goal_vocab(profile: dict) -> list[str]:
+    """Words named by active vocabulary goals, in the order they were set."""
+    words: list[str] = []
+    seen: set[str] = set()
+    for goal in active_goals(profile, "vocab"):
+        for word in goal.get("words", []):
+            if not isinstance(word, str) or not word.strip():
+                continue
+            key = word.strip().casefold()
+            if key not in seen:
+                seen.add(key)
+                words.append(word.strip())
+    return words
+
+
 def top_vocab_to_practice(profile: dict, n: int = 5) -> list[str]:
-    words = sorted(
+    """Words to weave into today's story: goal words first, then the least
+    practiced.
+
+    Without the goal pass the ordering is purely reactive — a word the student
+    explicitly set out to learn would wait its turn behind whatever the last
+    analysis happened to flag, which is the opposite of what setting a goal is
+    for. Goal words are included even if the profile has never logged them.
+    """
+    chosen = goal_vocab(profile)[:n]
+    seen = {w.casefold() for w in chosen}
+    entries = sorted(
         profile.get("vocab_to_practice", []),
         key=lambda v: (v.get("times_targeted", 0), v.get("last_seen", "")),
     )
-    return [w["word"] for w in words[:n]]
+    for entry in entries:
+        if len(chosen) >= n:
+            break
+        word = entry.get("word", "")
+        if word and word.casefold() not in seen:
+            chosen.append(word)
+            seen.add(word.casefold())
+    return chosen
 
 
 def generate_story(article_title: str, article_extract: str, profile: dict) -> dict:
@@ -447,6 +513,7 @@ def _empty_profile() -> dict:
         "articles_covered": [],
         "weaknesses": [],
         "vocab_to_practice": [],
+        "goals": {"active": [], "archive": []},
     }
 
 
