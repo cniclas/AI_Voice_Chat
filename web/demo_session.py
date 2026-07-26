@@ -23,6 +23,12 @@ the remaining presses continue through "turns". The linked lesson.md is the
 recorded session's when there is one, and otherwise just the story prose —
 the demo exists to lay out the UI, not to fake an answer key.
 
+The reverse challenge (``direction: "into_target"``) is scripted by the
+manuscript's "translation_into_target" block instead: its "prompt" is the
+native-language text narrated in place of the story, and its "student" line is
+the attempt in the language being learned. The review is still read and shown
+in the student's own language, exactly as the real session does it.
+
 No microphone is involved: the "ready" handshake carries ``demo: true``, which
 tells the frontend to turn the language buttons into "feed the next scripted
 user line" triggers (a ``simulate_turn`` message) instead of recording. Each
@@ -62,12 +68,21 @@ _REPO_ROOT = Path(__file__).parent.parent
 MANUSCRIPT_PATH = Path(__file__).parent / "demo_manuscript.json"
 DEMO_SESSION_NAME = "demo"
 
-# Mirror web/session.py so the idle status lines and filenames match exactly.
+# Mirror web/session.py so the idle status lines, directions and filenames
+# match exactly (spelled out rather than imported: the demo app deliberately
+# pulls in none of the pipeline).
 _PROMPT_TO_SPEAK = "Your turn — press a language button and speak."
 _PROMPT_TO_TRANSLATE_TEMPLATE = (
-    "Your turn to translate — press 🎙 {native} and say what the story means, "
+    "Your turn to translate — press 🎙 {spoken} and say what the story means, "
     "sentence by sentence."
 )
+_PROMPT_TO_PRODUCE_TEMPLATE = (
+    "Your turn to translate — press 🎙 {spoken} and say the story back in "
+    "{spoken}, sentence by sentence."
+)
+INTO_NATIVE = "into_native"
+INTO_TARGET = "into_target"
+DIRECTIONS = (INTO_NATIVE, INTO_TARGET)
 LESSON_FILENAME = "lesson.md"
 REVIEW_FILENAME = "translation_review.md"
 
@@ -303,8 +318,12 @@ class DemoSessionOrchestrator:
         self.user = user
         self.target = user.target
         self.native = user.native
+        self.direction = INTO_NATIVE
+        # Which language the scripted translation is spoken in; set for real
+        # when a challenge starts.
+        self.translate_lang = self.native.code
         self.prompt_to_translate = _PROMPT_TO_TRANSLATE_TEMPLATE.format(
-            native=self.native.endonym)
+            spoken=self.native.endonym)
         self.manuscript = _load_manuscript()
         self.delays = self.manuscript["delays_seconds"]
         self.session_dir: Path | None = None
@@ -327,9 +346,9 @@ class DemoSessionOrchestrator:
     async def _status(self, state: str, message: str):
         await self._send("status", state=state, message=message)
 
-    async def _set_stage(self, stage: str, prompt: str):
+    async def _set_stage(self, stage: str, prompt: str, language: str | None = None):
         self.stage = stage
-        await self._send("stage", stage=stage, prompt=prompt)
+        await self._send("stage", stage=stage, prompt=prompt, language=language)
 
     async def run(self):
         try:
@@ -364,7 +383,7 @@ class DemoSessionOrchestrator:
                 if msg_type == "start_talk":
                     await self._start_talk()
                 else:
-                    await self._start_challenge()
+                    await self._start_challenge(message.get("direction"))
             elif msg_type in {"user_audio", "simulate_turn"}:
                 if self.mode is None:
                     if msg_type == "user_audio":
@@ -416,12 +435,20 @@ class DemoSessionOrchestrator:
         await self._send("mode", mode="talk", session_name=self.session_name)
         await self._status("idle", _PROMPT_TO_SPEAK)
 
-    async def _start_challenge(self):
+    async def _start_challenge(self, direction: str | None = None):
         if self.mode is not None:
             return
         self.mode = "challenge"
+        if direction in DIRECTIONS:
+            self.direction = direction
+        reverse = self.direction == INTO_TARGET
+        self.translate_lang = self.target.code if reverse else self.native.code
+        self.prompt_to_translate = (
+            _PROMPT_TO_PRODUCE_TEMPLATE if reverse else _PROMPT_TO_TRANSLATE_TEMPLATE
+        ).format(spoken=(self.target if reverse else self.native).endonym)
         self._ensure_session_dir()
-        await self._send("mode", mode="challenge", session_name=self.session_name)
+        await self._send("mode", mode="challenge", session_name=self.session_name,
+                         direction=self.direction)
 
         await self._status(
             "thinking",
@@ -433,12 +460,12 @@ class DemoSessionOrchestrator:
                 f"Building today's challenge — {label}… ({i}/{len(_LESSON_STEPS)})")
             await asyncio.sleep(self.delays["lesson_step"])
 
-        story = self.manuscript.get("story")
-        if story:
+        prompt = self._prompt_side()
+        if prompt:
             await self._status("speaking", "Reading today's story aloud…")
             audio_bytes = _part_audio(
-                story, f"{story['story_title']}. {story['story']}", self.target.code)
-            story_filename = f"story_{self.target.code}.wav"
+                prompt, f"{prompt['title']}. {prompt['text']}", prompt["lang"])
+            story_filename = f"story_{prompt['lang']}.wav"
             (self.session_dir / story_filename).write_bytes(audio_bytes)
             # Mirror web/session.py: the story is a normal assistant bubble
             # (sent after the WAV exists — the bubble's audio element is
@@ -447,8 +474,8 @@ class DemoSessionOrchestrator:
             await self._send(
                 "transcript",
                 author="assistant",
-                language=self.target.code,
-                text=f"{story['story_title']}\n\n{story['story']}",
+                language=prompt["lang"],
+                text=f"{prompt['title']}\n\n{prompt['text']}",
                 audio_filename=story_filename,
             )
             await self._send("tts_audio", turn="story")
@@ -458,8 +485,32 @@ class DemoSessionOrchestrator:
         # translation has been marked — same as the real session.
         self._write_lesson_file()
         self.awaiting_translation = True
-        await self._set_stage("translate", self.prompt_to_translate)
+        await self._set_stage("translate", self.prompt_to_translate,
+                              language=self.translate_lang)
         await self._status("idle", self.prompt_to_translate)
+
+    def _translation_script(self) -> dict:
+        """The scripted translation for whichever direction is running."""
+        key = "translation_into_target" if self.direction == INTO_TARGET else "translation"
+        return self.manuscript.get(key) or {}
+
+    def _prompt_side(self) -> dict | None:
+        """What gets narrated: the target-language story, or — reversed — the
+        native-language text the manuscript gives to translate back. Falls back
+        to the story so a manuscript without a reverse block still demos the
+        layout, just in the wrong language."""
+        story = self.manuscript.get("story")
+        if self.direction == INTO_TARGET:
+            script = self._translation_script()
+            if script.get("prompt"):
+                return {"lang": self.native.code,
+                        "title": script.get("prompt_title", ""),
+                        "text": script["prompt"],
+                        "audio_path": None}
+        if not story:
+            return None
+        return {"lang": self.target.code, "title": story["story_title"],
+                "text": story["story"], "audio_path": story.get("audio_path")}
 
     def _write_lesson_file(self):
         """The recorded session's lesson when there is one, otherwise the story
@@ -491,28 +542,31 @@ class DemoSessionOrchestrator:
 
     async def _play_scripted_translation(self, user_audio_bytes: bytes | None = None):
         """The challenge's one scripted special turn: the student's spoken
-        translation into their own language, then the marked review."""
+        translation — into their own language, or into the one they are
+        learning when the challenge is reversed — then the marked review, which
+        is in their own language either way."""
         self.awaiting_translation = False
-        script = self.manuscript.get("translation") or {}
+        script = self._translation_script()
         student_text = script.get("student", "(no scripted translation)")
         review_text = script.get("review", "(no scripted review)")
+        spoken_lang = self.translate_lang
 
         if user_audio_bytes is None:
             user_audio_bytes = _placeholder_speech_wav(
-                student_text, self.native.code,
-                pitch_hz=_BASE_PITCH_HZ.get(self.native.code, 200.0) * _USER_PITCH_SCALE)
-        audio_path = generate_audio_filename(self.session_dir, "user", self.native.code)
+                student_text, spoken_lang,
+                pitch_hz=_BASE_PITCH_HZ.get(spoken_lang, 200.0) * _USER_PITCH_SCALE)
+        audio_path = generate_audio_filename(self.session_dir, "user", spoken_lang)
         Path(audio_path).write_bytes(user_audio_bytes)
 
         await self._status("thinking", "Transcribing what you said…")
         user_start = datetime.now()
         await asyncio.sleep(self.delays["transcribe"])
         self.responses.append(Response(
-            author="user", language=self.native.code, text=student_text,
+            author="user", language=spoken_lang, text=student_text,
             timestamp=datetime.now(), audio_sample=audio_path,
         ))
         await self._send(
-            "transcript", author="user", language=self.native.code, text=student_text,
+            "transcript", author="user", language=spoken_lang, text=student_text,
             audio_filename=Path(audio_path).name,
             processing_ms=int((datetime.now() - user_start).total_seconds() * 1000),
         )

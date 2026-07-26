@@ -12,6 +12,7 @@ from typing import Optional
 import numpy as np
 
 import languages
+import translation_challenge
 from curriculum import chat_completion
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -56,14 +57,29 @@ STORY_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT_TEMPLATE + (
 )
 
 CHALLENGE_SYSTEM_PROMPT_TEMPLATE = BASE_SYSTEM_PROMPT_TEMPLATE + (
-    "\n\nThe student has just done a translation challenge: they listened to a "
-    "story in {target_name} and translated it aloud into {native_name}, their "
-    "native language. They already have the marked review. Now they can ask "
+    "\n\n{challenge_intro} They already have the marked review. Now they can ask "
     "anything about the story, about one sentence, or about their mistakes; "
     "answer with examples from the story itself, quoting the sentence you are "
     "talking about. Today's grammar focus is: {focus}.\n\n"
     "STORY ({story_title}):\n{story}\n\n"
     "{review_context}"
+)
+
+# The two directions leave the student in genuinely different places: one has
+# just read the story below, the other has just tried to produce it and is
+# seeing it for the first time as an answer key.
+CHALLENGE_INTRO_INTO_NATIVE = (
+    "The student has just done a translation challenge: they listened to a "
+    "story in {target_name} and translated it aloud into {native_name}, their "
+    "native language."
+)
+
+CHALLENGE_INTRO_INTO_TARGET = (
+    "The student has just done a translation challenge in the producing "
+    "direction: they listened to a story in {native_name}, their native "
+    "language, and said it back aloud in {target_name}. The {target_name} story "
+    "below is the version they were working toward — they did not read it, they "
+    "had to build it."
 )
 
 REVIEW_CONTEXT_TEMPLATE = (
@@ -213,8 +229,11 @@ def build_challenge_system_prompt(lesson: dict, review: dict | None,
 
     The tutor gets the story and the review findings, so "why is it *le* there"
     can be answered from the text the student just worked through instead of
-    from a generic explanation.
+    from a generic explanation. Which way the student translated is part of
+    that context: the same story is a text they decoded or a target they tried
+    to hit, and the follow-up questions differ accordingly.
     """
+    names = _lang_names(target, native)
     review_context = ""
     if review:
         findings = "\n".join(
@@ -224,12 +243,16 @@ def build_challenge_system_prompt(lesson: dict, review: dict | None,
         )
         review_context = REVIEW_CONTEXT_TEMPLATE.format(
             summary=review.get("summary", ""), findings=findings)
+    intro = (CHALLENGE_INTRO_INTO_TARGET
+             if translation_challenge.direction_of(lesson) == translation_challenge.INTO_TARGET
+             else CHALLENGE_INTRO_INTO_NATIVE)
     return CHALLENGE_SYSTEM_PROMPT_TEMPLATE.format(
+        challenge_intro=intro.format(**names),
         focus=lesson.get("focus", ""),
         story_title=lesson.get("title", ""),
         story=lesson.get("story", ""),
         review_context=review_context,
-        **_lang_names(target, native),
+        **names,
     ) + _goal_context(goal)
 
 

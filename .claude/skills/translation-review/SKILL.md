@@ -201,8 +201,17 @@ harmless but it pads the profile with noise.
 ## A note on the other direction
 
 Reviewing the student *speaking the target language* is a different job, and the
-app already does it — `session_graphs.py` runs `analyze_weaknesses()` over the
-conversation transcript at the end of every session. This skill is specifically
-for comprehension checked through translation into the native language, which
-tests something that conversation does not: whether they can read closely, rather than infer from
-context and keep talking.
+app already does it twice over. `session_graphs.py` runs `analyze_weaknesses()`
+over the conversation transcript at the end of every session, and the browser's
+reverse translation challenge (`direction: "into_target"` in
+`translation_challenge.py`) narrates the lesson's natural translation and marks
+what the student says back against the target-language sentences it came from —
+production checked against an answer key rather than free conversation. That
+path reuses `references/judging.md` unchanged and reads the same
+`references/languages/<target>-<native>.md`: a speaker producing the target
+language flattens the distinctions they misread when reading it, and reaches for
+the native-language structure when they do.
+
+This skill is specifically for comprehension checked through translation into
+the native language, which tests something neither of those does: whether they
+can read closely, rather than infer from context and keep talking.

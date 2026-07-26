@@ -12,9 +12,11 @@
   const outputSelect = document.getElementById('output-device');
   const btnTalk = document.getElementById('btn-talk');
   const btnChallenge = document.getElementById('btn-challenge');
+  const btnChallengeReverse = document.getElementById('btn-challenge-reverse');
   const btnNative = document.getElementById('btn-native');
   const btnTarget = document.getElementById('btn-target');
   const challengeSub = document.getElementById('challenge-sub');
+  const challengeReverseSub = document.getElementById('challenge-reverse-sub');
   const btnStop = document.getElementById('btn-stop');
   const btnExit = document.getElementById('btn-exit');
   const completePanel = document.getElementById('complete-panel');
@@ -38,10 +40,13 @@
   let sessionFinished = false;
   let reconnectDelay = 1000;
   let backendReady = false;
-  // "translate" while the challenge waits for the spoken translation into the
-  // student's own language (the target language is not an option for that
-  // turn), "converse" otherwise.
+  // "translate" while the challenge waits for the spoken translation (only the
+  // language it has to be in is pressable for that turn), "converse" otherwise.
   let stage = 'converse';
+  // Which language the spoken translation has to be in — the student's own for
+  // the reading challenge, the one they're learning for the reverse one. The
+  // server sets it with the stage.
+  let translateLang = null;
   // The student's language pair, sent by the server in `ready` — which two
   // languages the record buttons stand for depends on who is practicing.
   let nativeLang = { code: 'en', label: 'English' };
@@ -61,20 +66,31 @@
     const ready = backendReady && wsOpen();
     btnTalk.disabled = !ready;
     btnChallenge.disabled = !ready;
+    btnChallengeReverse.disabled = !ready;
     loadingIndicator.hidden = ready;
   }
 
-  // Re-arm the record buttons for the next turn. The target language stays out
-  // of reach during the translation stage: the challenge is to say the story's
-  // meaning in the language the student already has, and answering in the
-  // target language would skip it.
+  // Re-arm the record buttons for the next turn. During a translation only the
+  // language being translated *into* is pressable — the server says which one,
+  // since a reverse challenge asks for the target language and the reading
+  // challenge for the student's own — and pressing the other would skip the
+  // exercise.
   function enableRecordButtons() {
+    // A translate stage that never named a language (an older server, a
+    // dropped field) leaves both buttons live rather than none.
+    const translating = stage === 'translate' && !!translateLang;
     if (recording) return;
-    btnNative.disabled = false;
-    btnTarget.disabled = stage === 'translate';
-    btnTarget.title = stage === 'translate'
-      ? `Translate into ${nativeLang.label} first — press 🎙 ${nativeLang.label}.`
-      : '';
+    [[btnNative, nativeLang], [btnTarget, targetLang]].forEach(([btn, lang]) => {
+      const wanted = !translating || lang.code === translateLang;
+      btn.disabled = !wanted;
+      btn.title = wanted
+        ? ''
+        : `Translate into ${labelFor(translateLang)} first — press 🎙 ${labelFor(translateLang)}.`;
+    });
+  }
+
+  function labelFor(code) {
+    return code === targetLang.code ? targetLang.label : nativeLang.label;
   }
 
   // Put the pair on the buttons (and in the challenge blurb) once the server
@@ -88,6 +104,11 @@
       challengeSub.textContent =
         `Hear today's ${targetLang.label} story, translate it aloud into `
         + `${nativeLang.label}, get it marked — then keep talking`;
+    }
+    if (challengeReverseSub) {
+      challengeReverseSub.textContent =
+        `Hear the same story in ${nativeLang.label}, say it back in `
+        + `${targetLang.label}, get it marked — then keep talking`;
     }
   }
 
@@ -260,6 +281,7 @@
     recording = false;
     lastAssistantAudio = null;
     stage = 'converse';
+    translateLang = null;
     idlePrompt = 'Your turn — press a language button and speak.';
     enableRecordButtons();
     btnStop.disabled = true;
@@ -308,10 +330,15 @@
     phaseBadge.textContent = mode === 'challenge' ? 'challenge' : 'talking';
   }
 
-  function requestMode(mode) {
+  // `direction` only means anything to a challenge: "into_native" is the
+  // reading challenge, "into_target" the reverse one where the student produces
+  // the language they're learning.
+  function requestMode(mode, direction) {
     if (!wsOpen() || !backendReady) return;
     if (sessionFinished) return;
-    const message = { type: mode === 'challenge' ? 'start_challenge' : 'start_talk' };
+    const message = mode === 'challenge'
+      ? { type: 'start_challenge', direction }
+      : { type: 'start_talk' };
     ws.send(JSON.stringify(message));
   }
 
@@ -336,6 +363,7 @@
         break;
       case 'stage':
         stage = msg.stage;
+        translateLang = msg.language || null;
         if (msg.prompt) idlePrompt = msg.prompt;
         phaseBadge.textContent = stage === 'translate' ? 'translate' : 'talking';
         enableRecordButtons();
@@ -411,9 +439,12 @@
 
   function sendSimulatedTurn(language) {
     // Demo mode: no recording — ask the server to play the next scripted
-    // exchange (user line + AI answer) in the pressed language. The disabled
-    // state doubles as the in-flight guard until the reply has played.
-    if (!wsOpen() || btnNative.disabled) return;
+    // exchange (user line + AI answer) in the pressed language. The pressed
+    // button's own disabled state doubles as the in-flight guard until the
+    // reply has played — its own, because during a translation the other
+    // button is disabled for the whole turn.
+    const pressed = language === targetLang.code ? btnTarget : btnNative;
+    if (!wsOpen() || pressed.disabled) return;
     btnNative.disabled = true;
     btnTarget.disabled = true;
     setAvatarState('thinking');
@@ -433,7 +464,8 @@
     btnStop.disabled = false;
     setAvatarState('listening');
     statusText.textContent = stage === 'translate'
-      ? 'Listening — say what the story means, sentence by sentence. Press Stop when done.'
+      ? `Listening — your translation in ${labelFor(language)}, sentence by sentence. `
+        + 'Press Stop when done.'
       : `Listening (${language})… press Stop when you're done.`;
     try {
       await AudioCapture.start();
@@ -485,7 +517,12 @@
   btnChallenge.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    requestMode('challenge');
+    requestMode('challenge', 'into_native');
+  });
+  btnChallengeReverse.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    requestMode('challenge', 'into_target');
   });
   btnNative.addEventListener('click', () => startRecording(nativeLang.code));
   btnTarget.addEventListener('click', () => startRecording(targetLang.code));
